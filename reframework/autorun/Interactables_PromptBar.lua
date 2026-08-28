@@ -8,7 +8,7 @@ local M = {
     log     = true,
 }
 
-local LOG = "IrisPromptBar.log"
+local LOG = "Interactables_PromptBar.log"
 local function _log(s)
     if not M.log then return end
     pcall(function()
@@ -169,23 +169,35 @@ pcall(function()
     world.guid = parse and parse:call(nil, WORLD_GUID_TEXT)
 end)
 
-do
+_G.InteractablesPromptMessagePre = function(args)
+    local hit = false
+    pcall(function()
+        local g = sdk.to_valuetype(args[2], "System.Guid")
+        hit = g and tostring(g:ToString()):lower() == WORLD_GUID_TEXT
+    end)
+    thread.get_hook_storage().iris_world_prompt = hit
+end
+_G.InteractablesPromptMessagePost = function(retval)
+    local out = retval
+    pcall(function()
+        if thread.get_hook_storage().iris_world_prompt ~= true then return end
+        local text = _G.IrisPrompt.current()
+        if text then out = sdk.to_ptr(sdk.create_managed_string(text)) end
+    end)
+    return out
+end
+
+-- REFramework cannot remove hooks on script reset. Install these once and route
+-- through fresh global functions so repeated reloads never stack stale closures.
+if not _G.InteractablesPromptMessageHooksInstalled then
     local function pre(args)
-        local hit = false
-        pcall(function()
-            local g = sdk.to_valuetype(args[2], "System.Guid")
-            hit = g and tostring(g:ToString()):lower() == WORLD_GUID_TEXT
-        end)
-        thread.get_hook_storage().iris_world_prompt = hit
+        local f = rawget(_G, "InteractablesPromptMessagePre")
+        if type(f) == "function" then return f(args) end
     end
     local function post(retval)
-        local out = retval
-        pcall(function()
-            if thread.get_hook_storage().iris_world_prompt ~= true then return end
-            local text = _G.IrisPrompt.current()
-            if text then out = sdk.to_ptr(sdk.create_managed_string(text)) end
-        end)
-        return out
+        local f = rawget(_G, "InteractablesPromptMessagePost")
+        if type(f) == "function" then return f(retval) end
+        return retval
     end
     local hooked = 0
     pcall(function()
@@ -205,6 +217,7 @@ do
         local method = td and td:get_method("getMessage(System.Guid)")
         if method then sdk.hook(method, pre, post); hooked = hooked + 1 end
     end)
+    if hooked > 0 then _G.InteractablesPromptMessageHooksInstalled = true end
     _log("native world prompt message bridge armed on " .. tostring(hooked) .. " surface(s)")
 end
 
@@ -333,7 +346,7 @@ end)
 re.on_script_reset(function() slots = {}; raw = {} end)
 
 re.on_draw_ui(function()
-    if not imgui.tree_node("IRIS PROMPT BAR (relabel the game's own button hints)") then return end
+    if not imgui.tree_node("IMMERSIVE INTERACTABLES - PROMPT BAR") then return end
     imgui.text("Modules publish an action; the game's button panel shows it.")
     local cur = _G.IrisPrompt.current()
     imgui.text("currently offering: " .. (cur and ("'" .. cur .. "'") or "nothing"))

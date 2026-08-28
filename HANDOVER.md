@@ -124,63 +124,45 @@ anvil `PIN` loader) — engine object work belongs on the game thread.
 |---|---|
 | Camp cooking CTD | **NOT CAUSED BY THIS MOD — see §4.1.** Reproduces with the mod fully disabled after a clean restart. |
 | Beds "not interactable" for users | **Cause found**: `native_beds`/`native_chores` shipped defaulting to `false`. Now `true` + cfg_rev 6 migration. Untested. |
-| Carrying bucket/hatchet/logs | Spawns correctly, then was dropped by the bad `l3` bind. Fixed to BACKSPACE-only; **untested**. |
-| Carry *pose* (two-armed log carry) | Not implemented. Native pose dies with the loan. Would need driving carry locomotion clips like `_tl_play` does for sweep. |
-| Bed "Rest until…" | Menu works; sleeping only fires on beds with their own `InnParam`. "Any bed" mode borrows another bed's settings — **destructive**, defaulted OFF. |
+| Carrying bucket/hatchet/logs | Borrowed one-handed tools now fall back to a hand-parented visual when the native loan dies. L3 or the configured Drop key returns native `ObjectCarry` props and borrowed tools. |
+| Carry *pose* (two-armed log carry) | The game-owned `ObjectCarry` pose is preserved and its native `putObject()` is used. No unverified full-body locomotion clip is forced onto hand-tool fallbacks. |
+| Bed "Rest until…" | Rest is handed to `FacilityManager` without aborting the lie-down. Any-bed wake data uses a private `InnAwakeParam` aimed at the current bed; a real donor is read only to calibrate coordinate space. |
 | Seat vibration | Known cosmetic issue. Colliders exonerated. Root-motion family; unhunted. |
 | Hatchet vs log stand | Holding an axe does not change the stand's native verb ("gather"). Not a grip issue. |
 
 ### 4.1 The camp cooking crash — what is actually known
 
-**The mod is exonerated on Aurora's machine, by a clean test.**
+**Corrected by Lyra's 2026-08-28 release audit: the 1.0.1 public archive was not
+exonerated.** The local disabled test used a newer script than the archive and still
+loaded unrelated development hooks from `InteractButton.lua`, `IrisBedWake.lua` and
+other autorun files. In particular, `InteractButton.lua` recorded `gm80_060` ActStart
+immediately before the later crash. That was not a clean vanilla control.
 
-Test performed 2026-08-28: full game restart (so no `sdk.hook` could be installed —
-hooks cannot be removed at runtime, only a restart clears them), mod's master **Enabled**
-switch off (so `on_frame` returns immediately and no interact point is ever unlocked),
-then cook at a camp → **still crashes**.
+The public 1.0.1 archive contains two coupled faults:
 
-Three dumps, all `0xC0000005` (access violation, reading null):
+1. It installs `sdk.hook(app.InteractManager.cancelInteract)` unconditionally, with no
+   master gate. Inside that native pre-hook it calls `sdk.to_managed_object(args[3])`,
+   `_active_native()` and `_st_release()`, re-entering `InteractManager` during its own
+   cancellation. A null or stale character argument therefore reaches REFramework's
+   managed-object retain path.
+2. It classifies the native camp stew pots `gm80_060`–`gm80_064` as custom town cook
+   pots, so the mod and the native camp sequence can consume the same Interact press.
 
-| when | faulting address | mod state |
-|---|---|---|
-| 13:22 | `0x1449FAC23` | enabled, GimmickHolder hook live |
-| 13:38 | `0x1449FAA95` | enabled, GimmickHolder hook removed |
-| 14:04 | `0x1449FAC26` | **disabled, clean restart, no hooks at all** |
+The fault addresses confirm the mechanism. REFramework's own startup log locates its
+managed-object `add_ref` routine at `0x1449FAAC0` and `release` at `0x1449FAC00`; the
+observed first faults (`0x1449FAA95`, `0x1449FAC23`, `0x1449FAC26`) are in or immediately
+beside those routines. They are not evidence of a mysterious generated stub above a
+managed-code ceiling. The null-object register on the first exception matches the unsafe
+hook conversion; the later exception is the crash reporter following the original AV.
 
-All three sit within ~0x190 bytes of each other, i.e. **the same function**, and all are
-above the managed-code VA ceiling `0x1449d9b90`, so it is generated/stub code.
+Version 1.0.2 removes every hook from `Interactables.lua`, removes the native camp IDs
+from the custom pot allow-list and denies them explicitly, removes D2D, gates disabled
+mode before engine work, and stops manually retaining/releasing scene-owned GameObjects.
+The included prompt bridge keeps one guarded message hook, installed once across reloads;
+it never touches `InteractManager`.
 
-What this rules out:
-- Not the `GimmickHolder` hook (crash survived its removal).
-- Not the `cancelInteract` hook (crash survived a restart with the hook never installed).
-- Not the unlock system, the cook menu, the prompt bar, or any per-frame work
-  (all gated off by the master switch during the 14:04 crash).
-
-⚠ **Two earlier conclusions in this project's history were wrong and are corrected here**:
-the crash was blamed first on the GimmickHolder hook, then on `cancelInteract`
-re-entrancy. The hook fixes were still worth keeping — the re-entrancy was genuinely
-unsafe (§3.1) — but neither was this crash.
-
-⚠ **BUT the bisect above is weaker than it looks, and this is the live lead.**
-"Disabled" only stops `on_frame` work. The script is still **loaded**, and until
-2026-08-28 it called `d2d.register(...)` at load time for the cooking toast. A D2D draw
-callback:
-- is registered regardless of the master switch,
-- is re-registered on every restart while the file is installed,
-- cannot be unregistered at runtime,
-- and every user has it.
-
-That fits Aurora's crash (mod "off", still crashes) **and** the user reports, which
-`IrisFarming` cannot explain. **The `d2d.register` call has now been removed** — the
-toast draws through `draw.text` in `on_frame` instead.
-
-Next steps, in order:
-1. Retest camp cooking with the current build (no d2d). If it stops crashing, that was it.
-2. If it still crashes: **physically remove `Interactables.lua`** (rename it), restart,
-   cook. That is the only true "mod not present" test — disabling is not enough.
-3. If it still crashes with the file gone, the fault is elsewhere in the load order or in
-   vanilla; ask a reporting user for their `reframework_crash.dmp` faulting address. If
-   theirs also lands near `0x1449FAxxx` it is the same underlying fault.
+The next meaningful test is the 1.0.2 archive in a clean REFramework autorun profile.
+Do not use the current development load order as proof for or against the public mod.
 
 ### Deliberately not done
 - **Cooking other ingredients** (fish/herbs/fruit): DD2's pot cooking is the camp-meal
@@ -216,20 +198,18 @@ Prefab spawn recipe (proven): `via.Prefab` + `.ctor()` + `set_Path("AppSystem/Eq
 
 ## 6. Next steps, in order
 
-1. Camp cook crash: bisect the **load order**, not this mod (§4.1 — it is already
-   exonerated locally). Start by disabling `IrisFarming`.
-2. Confirm beds now work on a fresh config (the `native_beds` default fix).
-3. Confirm carried tools stay in hand now the drop bind is BACKSPACE-only.
-4. Package and push **v1.0.2** — it carries the crash fix, the beds-off fix, the party
-   buff fix, keyboard stop keys, vanilla meat names, and the beams recategorisation.
-5. Then, as a feature: the **carry pose** (drive carry locomotion clips), which would
-   also make per-tool grip offsets unnecessary.
+1. Install and test the **v1.0.2 archive in a clean autorun profile**: one native camp
+   meal, one town cauldron meal, one NPC-only bed and one house/inn bed.
+2. Confirm custom DD2 keyboard remapping, custom Stop/Drop capture, L3 drop, a one-handed
+   borrowed tool and a native two-handed beam/log.
+3. Only investigate a hand-tool locomotion pose if a verified native motion family is
+   found. Forcing an unverified full-body clip would break movement and is not release-safe.
 
 ## 7. Useful context files
 - Live log: `reframework/data/Interactables.log` (enable via dev tools).
 - Crash dumps: `reframework_crash.dmp` in the game folder — **preserve before retesting**,
-  it is overwritten. Managed-code VA ceiling is `0x1449d9b90`; anything above that is
-  generated/stub code and usually means a hook problem.
+  it is overwritten. Resolve addresses against REFramework's own startup-discovered
+  managed-object routines before labelling them generated/stub code.
 - Reference mods in `reframework/autorun/`: `IrisBedWake.lua` (inn params, coordinate
   space), `IrisWoodcutting.lua` (eqit prefab list), `IrisFarming.lua` (dialog recipe),
   `Brinebound.lua` (input, party enumeration).

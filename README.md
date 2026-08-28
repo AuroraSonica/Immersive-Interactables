@@ -5,11 +5,12 @@ A Dragon's Dogma 2 mod that lets you live in the world the way NPCs do. Sit on a
 ## Features
 
 - **Sit anywhere** - chairs, stools and benches all over the world become sittable, including ones the game reserved for NPCs.
-- **Work anywhere** - around 30 kinds of workstation open up with their real animations and props: knead dough, work the forge, sweep, weave, chop wood, chop food at the cutting board, polish blades, dye cloth, tend fires and pots, and more. Press B again (or BACKSPACE) to stop; work animations finish their motion naturally.
-- **Villager tools** - pick up loose brooms and pitchforks and actually use them. Carry a pitchfork to a haystack and pitch hay with it.
-- **Sleep in beds** - real lie-down sleeping in inn and house beds. B gets you back up.
-- **Cook at any pot** - town cauldrons and campfire pots serve a native cooking menu with the game's real camp meats. Cooking consumes the meat and grants the real party buffs.
+- **Work anywhere** - around 30 kinds of workstation open up with their real animations and props: knead dough, work the forge, sweep, weave, chop wood, chop food at the cutting board, polish blades, dye cloth, tend fires and pots, and more. Press Interact again (or your Stop key) to finish naturally.
+- **Carry villager tools and scene props** - loose brooms, buckets, pitchforks, hatchets, logs and beams can stay with you when you move. Native carrying is preserved where the game provides it; hand tools use a persistent visual fallback if the original loan expires. L3 or the configured Drop key puts an object down.
+- **Sleep and actually rest** - lie down in supported beds and choose Morning or Nightfall without the mod aborting the sleep animation first. Wake positions are built from the bed's current transform, so placed beds do not send you back to their prefab's original location. House and inn beds retain their native rest flow and now request the lie-down animation as it opens.
+- **Cook at town cauldrons** - choose from the camp meats in your party inventory; cooking consumes one and applies its real party buff. Native campfire cooking is deliberately untouched.
 - **Close-up camera** while working, using the game's own camera system.
+- **Rebind-aware controls** - by default, Interact follows the player's current DD2 keyboard/controller binding, as in Brinebound. The Controls panel also lets you capture custom keyboard fallbacks for Use, Stop and Drop.
 
 ## Requirements
 
@@ -17,7 +18,7 @@ A Dragon's Dogma 2 mod that lets you live in the world the way NPCs do. Sit on a
 
 ## Install
 
-**Fluffy Mod Manager (recommended):** install `packages/Immersive_Interactables_v1.0_FluffyMod.zip` like any other mod.
+**Fluffy Mod Manager (recommended):** install `Immersive_Interactables_v1.0.2_FluffyMod.zip` like any other mod.
 
 **Manual:** drop the `reframework` folder from this mod into your Dragon's Dogma 2 game directory (the folder containing `DD2.exe`), merging with the existing `reframework` folder. Three files are added:
 
@@ -29,19 +30,21 @@ reframework/data/Interactables/catalog.json
 
 ## Use
 
-Walk up to things. Prompts appear on chairs, workstations, beds, tools and cook pots the same way the game's own prompts do. B interacts; B again (or BACKSPACE) stops a looping work animation; BACKSPACE is also the emergency exit if anything ever feels stuck.
+Walk up to things. Prompts appear on chairs, workstations, beds, tools and town cook pots in the game's own prompt area. Your current DD2 Interact binding uses them. Interact again or the configured Stop key ends a looping action. L3 or the configured Drop key puts down a carried object.
 
-Settings live in the REFramework menu under **Immersive Interactables**. The Advanced section has camera and seat tuning plus a per-station list if you want to turn any single station off.
+Settings live in the REFramework menu under **Immersive Interactables**. The **Controls** section follows DD2's current Interact binding automatically and can capture custom keyboard keys. The Advanced section contains camera and seat tuning plus a per-station list.
 
 ## Compatibility
 
-- Plays nicely alongside the IRIS and Brinebound mod families - the prompt bar is shared, and their menus take priority where they overlap (for example the IRIS cook menu at cook pots).
+- Has no code prerequisite beyond REFramework. `Interactables_PromptBar.lua` is included in the archive; D2D and other IRIS/Brinebound Lua files are not required.
+- Can share its prompt bar with IRIS-family mods when they are installed, but does not depend on them.
 - Does not touch saves, items or quests, with one exception: cooking consumes the meat you choose to cook, exactly like camp cooking does.
 
 ## Known issues
 
 - Some seats vibrate slightly while sitting. Cosmetic; being investigated.
 - A few workstations animate without a visible tool in one hand - that is how the game authored them (its own NPC smiths hammer empty-handed too).
+- The persistent fallback for a one-handed tool keeps the object in hand but cannot invent a locomotion pose the game did not author for that tool.
 
 ## Credits
 
