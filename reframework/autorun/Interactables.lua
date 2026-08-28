@@ -46,7 +46,9 @@ local M = {
     st_cam            = true,
     st_cam_dist       = -1.2,
 
-    anvil_id = 0,
+    anvil_prop = "eqit09_001",
+    pin_ox = 0.0, pin_oy = 0.0, pin_oz = 0.0,
+    pin_rx = 0.0, pin_ry = 0.0, pin_rz = 0.0,
     dev = false,
 
     cfg_rev = 0,
@@ -263,13 +265,17 @@ local PLANT_KINDS = { CHAIR = true }
 
 -- bed prefabs the game only gives to NPCs
 local BED_KEYS = {
-
     gm51_092 = true,
-
-    gm51_074 = true,
+    gm51_299 = true,
     gm51_092_02 = true, gm51_100 = true, gm51_115_01 = true,
     gm51_393 = true, gm51_396 = true, gm51_409 = true,
     gm51_460 = true, gm51_603 = true, gm51_742 = true,
+}
+
+-- NPC benches, unlocked as plain seats using the game's own sit
+local SIT_KEYS = {
+    gm51_074 = true,
+    gm50_070 = true,
 }
 
 -- objects we never touch
@@ -602,8 +608,12 @@ local function _patch_search_point(point, kind, host, source, index, io, owner, 
 
     local has_human = ct and (math.floor(ct / 8) % 2) == 1
 
-    if (icon ~= 0 and not (kind == "bed" and (icon == 30 or icon == 22)))
-        or not ct or not has_human or (ct % 2) == 1 then return false end
+    -- seats keep whatever icon the game authored, other kinds must start unlabeled
+    if kind ~= "seat"
+        and (icon ~= 0 and not (kind == "bed" and (icon == 30 or icon == 22))) then
+        return false
+    end
+    if not ct or not has_human or (ct % 2) == 1 then return false end
 
     local new_ct = ct + 1
     local wrote = pcall(function() point:set_field("CharacterType", new_ct) end)
@@ -1145,10 +1155,10 @@ STATIONS = {
     gm51_132    = { bank = 8530, path = "appsystem/gimmick/gm51_132/gm51_132_interact_motlist.motlist", label = "Weave" },
     gm51_133    = { bank = 8531, path = "appsystem/gimmick/gm51_133/gm51_133_interact_motlist.motlist", label = "Weave" },
     gm51_188_00 = { bank = 8532, path = "appsystem/gimmick/gm51_188/gm51_188_00_interact_motlist.motlist", label = "Work the forge" },
-    gm82_053    = { bank = 8540, path = "appsystem/gimmick/gm82_053/gm82_053_interact_motlist.motlist", label = "Smith" },
-    gm82_053_01 = { bank = 8541, path = "appsystem/gimmick/gm82_053/gm82_053_01_interact_motlist.motlist", label = "Smith" },
+    gm82_053    = { bank = 8540, path = "appsystem/gimmick/gm82_053/gm82_053_interact_motlist.motlist", label = "Smith", pin = true },
+    gm82_053_01 = { bank = 8541, path = "appsystem/gimmick/gm82_053/gm82_053_01_interact_motlist.motlist", label = "Smith", pin = true },
 
-    gm50_045_00 = { label = "Smithy station", conjure_cfg = true },
+    gm50_045_00 = { label = "Smithy station", pin = true },
 
     gm51_653    = { label = "Wash clothes" },
 
@@ -2144,8 +2154,171 @@ local function _mc_frame()
     end
 end
 
+-- holds a spawned workpiece against the free hand while smithing
+local PIN = { pfb = nil, job = nil, go = nil, id = nil }
+
+local function _pin_despawn()
+    if PIN.go then
+        -- detach from the hand before destroying
+        pcall(function()
+            local btf = PIN.go:call("get_Transform")
+            btf:call("set_ParentJoint", "")
+            btf:call("set_Parent", nil)
+        end)
+        pcall(function() PIN.go:call("destroy", PIN.go) end)
+    end
+    if PIN.donor then pcall(function() PIN.donor:call("destroy", PIN.donor) end) end
+    if PIN.cook and PIN.cook.go then
+        pcall(function() PIN.cook.go:call("destroy", PIN.cook.go) end)
+    end
+    PIN.go, PIN.job, PIN.id, PIN.jname, PIN.cook, PIN.donor = nil, nil, nil, nil, nil, nil
+    PIN.bmc, PIN.rebind = nil, nil
+end
+
+-- finds the mesh component on a prop or its children
+local function _pin_find_mesh(go, depth)
+    if not go or (depth or 0) > 4 then return nil end
+    local mc
+    pcall(function()
+        mc = go:call("getComponent(System.Type)", sdk.typeof("via.render.Mesh"))
+    end)
+    if mc then return mc end
+    local found
+    pcall(function()
+        local tf = go:call("get_Transform")
+        local child = tf and tf:call("get_Child")
+        while child and not found do
+            local cgo = child:call("get_GameObject")
+            if cgo then found = _pin_find_mesh(cgo, (depth or 0) + 1) end
+            child = child:call("get_Next")
+        end
+    end)
+    return found
+end
+
+-- applies the grip offset and rotation sliders to the held workpiece
+local function _pin_apply_local()
+    if not (PIN.go and PIN.jname) then return end
+    pcall(function()
+        local btf = PIN.go:call("get_Transform")
+        btf:call("set_LocalPosition",
+            Vector3f.new(M.pin_ox or 0, M.pin_oy or 0, M.pin_oz or 0))
+        local d = math.pi / 360
+        local cx, sx = math.cos((M.pin_rx or 0) * d), math.sin((M.pin_rx or 0) * d)
+        local cy, sy = math.cos((M.pin_ry or 0) * d), math.sin((M.pin_ry or 0) * d)
+        local cz, sz = math.cos((M.pin_rz or 0) * d), math.sin((M.pin_rz or 0) * d)
+        local q = ValueType.new(sdk.find_type_definition("via.Quaternion"))
+        q.w = cy * cx * cz + sy * sx * sz
+        q.x = cy * sx * cz + sy * cx * sz
+        q.y = sy * cx * cz - cy * sx * sz
+        q.z = cy * cx * sz - sy * sx * cz
+        btf:call("set_LocalRotation", q)
+    end)
+end
+
+local function _pin_spawn(id)
+    if PIN.go or PIN.job then return end
+    local pgo = _char_go(_player())
+    local p = pgo and _pos(pgo)
+    if not p then return end
+    -- props only accept placement at spawn, so lay the workpiece on the anvil in front
+    local fx, fz = 0, 1
+    pcall(function()
+        local az = pgo:call("get_Transform"):call("get_AxisZ")
+        fx, fz = az.x, az.z
+    end)
+    p = { x = p.x + fx * 0.75, y = p.y + 1.02, z = p.z + fz * 0.75 }
+    local pfb
+    local ok = pcall(function()
+        pfb = sdk.create_instance("via.Prefab"):add_ref()
+        pcall(function() pfb:add_ref_permanent() end)
+        pcall(function() pfb:call(".ctor()") end)
+        pfb:call("set_Path", "AppSystem/Equipment/eqit/" .. id .. ".pfb")
+        pcall(function() pfb:call("set_Standby", true) end)
+    end)
+    if not (ok and pfb) then return end
+    PIN.job = { pfb = pfb, f = 0, x = p.x, y = p.y + 1.0, z = p.z }
+    PIN.id = id
+end
+
+-- follows the current work session, spawning and pinning the prop to the hand
+local function _pin_frame()
+    local key = ST.session and ST.session.key
+    local row = key and STATIONS[key]
+    local want = row and row.pin and tostring(M.anvil_prop or "") ~= ""
+    if want and not PIN.go and not PIN.job and not PIN.cook then
+        _pin_spawn(tostring(M.anvil_prop))
+    elseif not want and (PIN.go or PIN.job or PIN.cook) then
+        _pin_despawn()
+    end
+    _pin_apply_local()
+end
+
 local CK = { req = false, open = false }
 re.on_application_entry("UpdateBehavior", function()
+    -- give the freshly spawned prop a few frames to finish building, then use it directly
+    if PIN.cook then
+        local ck2 = PIN.cook
+        ck2.f = ck2.f + 1
+        if ck2.f >= 10 then
+            PIN.go = ck2.go
+            PIN.cook = nil
+            -- glue the prop to the hand bone, the engine then carries it with zero lag
+            pcall(function()
+                local pgo = _char_go(_player())
+                local ptf = pgo and pgo:call("get_Transform")
+                local btf = PIN.go:call("get_Transform")
+                if ptf and btf then
+                    local jname = "R_PropA"
+                    pcall(function()
+                        local mot = pgo:call("getComponent(System.Type)", sdk.typeof("via.motion.Motion"))
+                        if mot and not mot:call("getJointByName", jname) then jname = "R_Arm_Hand" end
+                    end)
+                    local ok = pcall(function() btf:call("setParent", ptf, true) end)
+                    if not ok then pcall(function() btf:call("set_Parent", ptf) end) end
+                    pcall(function() btf:call("set_ParentJoint", jname) end)
+                    PIN.jname = jname
+                    _pin_apply_local()
+                    _st_log("PIN: workpiece parented to " .. jname)
+                end
+            end)
+        end
+    end
+    -- workpiece prefab loader
+    if PIN.job then
+        local q = PIN.job
+        pcall(function()
+            q.f = q.f + 1
+            if q.pfb:call("get_Ready") == true then
+                local inst
+                -- try to lay it flat with the rotation overload, upright otherwise
+                pcall(function()
+                    local rq = ValueType.new(sdk.find_type_definition("via.Quaternion"))
+                    rq.x, rq.y, rq.z, rq.w = 0.7071, 0, 0, 0.7071
+                    inst = q.pfb:call("instantiate(via.vec3, via.Quaternion)",
+                        Vector3f.new(q.x, q.y, q.z), rq)
+                end)
+                if not inst then
+                    pcall(function()
+                        inst = q.pfb:call("instantiate(via.vec3)", Vector3f.new(q.x, q.y, q.z))
+                    end)
+                end
+                if not inst then
+                    pcall(function()
+                        inst = q.pfb:call("instantiate", Vector3f.new(q.x, q.y, q.z))
+                    end)
+                end
+                if inst then
+                    pcall(function() inst = inst:add_ref() end)
+                    -- the prop's insides build over the next frames, steal after a wait
+                    PIN.cook = { go = inst, f = 0 }
+                end
+                PIN.job = nil
+            elseif q.f > 300 then
+                PIN.job = nil
+            end
+        end)
+    end
     if CK.inst_req then
         CK.inst_req = false
 
@@ -2249,8 +2422,10 @@ local function _registry_tick()
                     local isbed = M.native_beds ~= false
                         and (BED_KEYS[low] or BED_KEYS[base])
                         and not (M.st_off or {})[BED_KEYS[low] and low or base]
+                    local isseat = M.enabled ~= false
+                        and (SIT_KEYS[low] or SIT_KEYS[base])
                     local ispot = MC_POTS[base] == true
-                    if not (isbed or ispot) then return end
+                    if not (isbed or isseat or ispot) then return end
                     local np = tonumber(io:call("getNumInteractPoint")) or 0
                     local bd, bq = nil, nil
                     for p = 0, np - 1 do
@@ -2266,17 +2441,19 @@ local function _registry_tick()
                         MC.near = now
                         MC.near_pos = { x = bq.x, y = bq.y, z = bq.z }
                     end
-                    if isbed and bd < 100.0 then
-                        local key = BED_KEYS[low] and low or base
+                    if (isbed or isseat) and bd < 100.0 then
+                        local kind = isbed and "bed" or "seat"
+                        local key = isbed and (BED_KEYS[low] and low or base)
+                            or (SIT_KEYS[low] and low or base)
                         local dl = io:get_field("DataList")
                         local ndl = dl and tonumber(dl:call("get_Count")) or 0
                         for d = 0, ndl - 1 do
                             local pt = dl:call("get_Item", d)
                             if pt then
-                                local okp = _patch_search_point(pt, "bed", nm,
+                                local okp = _patch_search_point(pt, kind, nm,
                                     "bedfeed", d, io, nil, key)
                                 if okp then
-                                    _st_log("BEDFEED unlocked " .. key .. "[" .. d .. "]")
+                                    _st_log("BEDFEED unlocked " .. kind .. " " .. key .. "[" .. d .. "]")
                                 end
                             end
                         end
@@ -2390,12 +2567,7 @@ local function _st_frame()
                 _logf("station native session begun: %s", ST.session.host)
 
                 local strow = a.key and STATIONS[a.key]
-                local cid = strow and strow.conjure or nil
-                if strow and strow.conjure_cfg then
-                    cid = tonumber(M.anvil_id) or 0
-                    if cid <= 0 then cid = nil end
-                end
-                if strow then strow = { conjure = cid, label = strow.label } end
+                if strow then strow = { conjure = strow.conjure, label = strow.label } end
                 if strow and strow.conjure and not ST.conjured then
                     local heldid = 0
                     pcall(function()
@@ -2421,9 +2593,9 @@ local function _st_frame()
         ST.conjured, ST.conj_at, ST.conj_probed, ST.conj_restage = nil, nil, nil, nil
     end
 
-    if ST.conjured and ST.session
-        and os.clock() - (tonumber(ST.conj_restage) or 0) > 0.25 then
-        ST.conj_restage = os.clock()
+    -- the game clears the prop slot every frame, so claim it back every frame too,
+    -- re-claiming a slot that already holds our item is a cheap update, not a respawn
+    if ST.conjured and ST.session then
         local held = false
         pcall(function()
             local ch = _player()
@@ -2575,6 +2747,7 @@ re.on_frame(function()
     pcall(_bed_probe_tick)
     pcall(_registry_tick)
     pcall(_mc_frame)
+    pcall(_pin_frame)
 end)
 
 -- put everything back on script reset
@@ -2584,6 +2757,7 @@ re.on_script_reset(function()
     pcall(function() _tl_stop("script reset") end)
     pcall(function() _mc_stop_stir() end)
     pcall(function() if MC.open then _mc_close() end end)
+    pcall(function() _pin_despawn() end)
     pcall(function()
         if ST.conjured then _st_conjure(ST.conjured, false); ST.conjured = nil end
     end)
@@ -2608,7 +2782,10 @@ re.on_draw_ui(function()
     local c
 
     c, M.enabled = imgui.checkbox("Sit anywhere - chairs, stools and benches", M.enabled)
-    if c then _save_cfg(); if not M.enabled then _drop_all(true) end end
+    if c then
+        _save_cfg()
+        if not M.enabled then _drop_all(true); _restore_unlocks("seat") end
+    end
 
     c, M.stations = imgui.checkbox("Work anywhere - knead, smith, sweep, weave, cook and more",
         M.stations ~= false)
@@ -2671,10 +2848,25 @@ re.on_draw_ui(function()
         if imgui.button("Remove every hidden seat now") then _drop_all(true) end
 
         local ca
-        ca, M.anvil_id = imgui.slider_int(
-            "anvil workpiece id (0 = off)", tonumber(M.anvil_id) or 0, 0, 55)
+        ca, M.anvil_prop = imgui.input_text(
+            "smithing workpiece prefab (blank = none)", tostring(M.anvil_prop or ""))
         if ca then _save_cfg() end
-        imgui.text("      held in the free hand while smithing")
+        imgui.text("      held in the free hand while smithing, eqit09_001 is a sword")
+        if imgui.tree_node("Workpiece grip (live while smithing)") then
+            c, M.pin_ox = imgui.slider_float("offset X (m)", M.pin_ox or 0.0, -0.5, 0.5)
+            c, M.pin_oy = imgui.slider_float("offset Y (m)", M.pin_oy or 0.0, -0.5, 0.5)
+            c, M.pin_oz = imgui.slider_float("offset Z (m)", M.pin_oz or 0.0, -0.5, 0.5)
+            c, M.pin_rx = imgui.slider_float("rotate X (deg)", M.pin_rx or 0.0, -180.0, 180.0)
+            c, M.pin_ry = imgui.slider_float("rotate Y (deg)", M.pin_ry or 0.0, -180.0, 180.0)
+            c, M.pin_rz = imgui.slider_float("rotate Z (deg)", M.pin_rz or 0.0, -180.0, 180.0)
+            if imgui.button("Reset grip") then
+                M.pin_ox, M.pin_oy, M.pin_oz = 0.0, 0.0, 0.0
+                M.pin_rx, M.pin_ry, M.pin_rz = 0.0, 0.0, 0.0
+            end
+            imgui.same_line()
+            if imgui.button("Save grip") then _save_cfg() end
+            imgui.tree_pop()
+        end
 
         imgui.text(string.format("Stations - %d point(s) unlocked",
             _unlock_count("station")))
