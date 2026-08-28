@@ -122,13 +122,53 @@ anvil `PIN` loader) — engine object work belongs on the game thread.
 ### Broken / unfinished
 | Thing | State |
 |---|---|
-| Camp cooking CTD | Cause identified (hook re-entrancy, §3.1). Hook now off by default. **Needs a full-restart retest.** |
+| Camp cooking CTD | **NOT CAUSED BY THIS MOD — see §4.1.** Reproduces with the mod fully disabled after a clean restart. |
 | Beds "not interactable" for users | **Cause found**: `native_beds`/`native_chores` shipped defaulting to `false`. Now `true` + cfg_rev 6 migration. Untested. |
 | Carrying bucket/hatchet/logs | Spawns correctly, then was dropped by the bad `l3` bind. Fixed to BACKSPACE-only; **untested**. |
 | Carry *pose* (two-armed log carry) | Not implemented. Native pose dies with the loan. Would need driving carry locomotion clips like `_tl_play` does for sweep. |
 | Bed "Rest until…" | Menu works; sleeping only fires on beds with their own `InnParam`. "Any bed" mode borrows another bed's settings — **destructive**, defaulted OFF. |
 | Seat vibration | Known cosmetic issue. Colliders exonerated. Root-motion family; unhunted. |
 | Hatchet vs log stand | Holding an axe does not change the stand's native verb ("gather"). Not a grip issue. |
+
+### 4.1 The camp cooking crash — what is actually known
+
+**The mod is exonerated on Aurora's machine, by a clean test.**
+
+Test performed 2026-08-28: full game restart (so no `sdk.hook` could be installed —
+hooks cannot be removed at runtime, only a restart clears them), mod's master **Enabled**
+switch off (so `on_frame` returns immediately and no interact point is ever unlocked),
+then cook at a camp → **still crashes**.
+
+Three dumps, all `0xC0000005` (access violation, reading null):
+
+| when | faulting address | mod state |
+|---|---|---|
+| 13:22 | `0x1449FAC23` | enabled, GimmickHolder hook live |
+| 13:38 | `0x1449FAA95` | enabled, GimmickHolder hook removed |
+| 14:04 | `0x1449FAC26` | **disabled, clean restart, no hooks at all** |
+
+All three sit within ~0x190 bytes of each other, i.e. **the same function**, and all are
+above the managed-code VA ceiling `0x1449d9b90`, so it is generated/stub code.
+
+What this rules out:
+- Not the `GimmickHolder` hook (crash survived its removal).
+- Not the `cancelInteract` hook (crash survived a restart with the hook never installed).
+- Not the unlock system, the cook menu, the prompt bar, or any per-frame work
+  (all gated off by the master switch during the 14:04 crash).
+
+⚠ **Two earlier conclusions in this project's history were wrong and are corrected here**:
+the crash was blamed first on the GimmickHolder hook, then on `cancelInteract`
+re-entrancy. The hook fixes were still worth keeping — the re-entrancy was genuinely
+unsafe (§3.1) — but neither was this crash.
+
+Still open: users report the same crash and attribute it to this mod. That has **not**
+been verified against a clean install. Next steps, in order:
+1. Test with **only** Immersive Interactables installed (Aurora runs a very large load
+   order; `IrisFarming` in particular has its own cook menu at pots).
+2. Test vanilla with no REFramework scripts at all — establish whether the crash exists
+   without any mod.
+3. Ask a reporting user for their `reframework_crash.dmp` faulting address. If it also
+   lands near `0x1449FAxxx`, it is the same underlying fault and not ours.
 
 ### Deliberately not done
 - **Cooking other ingredients** (fish/herbs/fruit): DD2's pot cooking is the camp-meal
@@ -164,7 +204,8 @@ Prefab spawn recipe (proven): `via.Prefab` + `.ctor()` + `set_Path("AppSystem/Eq
 
 ## 6. Next steps, in order
 
-1. **Full game restart**, then cook at a camp. Confirms the hook was the crash.
+1. Camp cook crash: bisect the **load order**, not this mod (§4.1 — it is already
+   exonerated locally). Start by disabling `IrisFarming`.
 2. Confirm beds now work on a fresh config (the `native_beds` default fix).
 3. Confirm carried tools stay in hand now the drop bind is BACKSPACE-only.
 4. Package and push **v1.0.2** — it carries the crash fix, the beds-off fix, the party
