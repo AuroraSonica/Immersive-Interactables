@@ -198,7 +198,7 @@ local PAD_ALIAS = {
 }
 local VK_ALIAS = {
     space = 0x20, enter = 0x0D, tab = 0x09, esc = 0x1B, escape = 0x1B,
-    shift = 0x10, ctrl = 0x11, alt = 0x12,
+    shift = 0x10, ctrl = 0x11, alt = 0x12, backspace = 0x08, delete = 0x2E,
 }
 for i = 0, 25 do VK_ALIAS[string.char(97 + i)] = 0x41 + i end
 for i = 0, 9 do VK_ALIAS[tostring(i)] = 0x30 + i end
@@ -222,6 +222,21 @@ local function _pad_button_mask()
     return mask
 end
 
+-- reads the keyboard device directly so keys work on every REFramework build
+local function _kb_down(vk)
+    local down = false
+    pcall(function()
+        local s = sdk.get_native_singleton("via.hid.Keyboard")
+        local td = sdk.find_type_definition("via.hid.Keyboard")
+        local dev = (s and td) and sdk.call_native_func(s, td, "get_Device")
+        if dev then down = dev:call("isDown", math.floor(vk)) == true end
+    end)
+    if not down then
+        pcall(function() down = reframework:is_key_down(math.floor(vk)) == true end)
+    end
+    return down
+end
+
 local function _binding_down(text)
     text = tostring(text or "")
     local padmask = nil
@@ -236,11 +251,7 @@ local function _binding_down(text)
         else
             local vk = VK_ALIAS[token] or tonumber(token)
             if not vk and token:match("^0x[0-9a-f]+$") then vk = tonumber(token:sub(3), 16) end
-            local down = false
-            if vk then
-                pcall(function() down = reframework:is_key_down(math.floor(vk)) == true end)
-            end
-            if down then return true end
+            if vk and _kb_down(vk) then return true end
         end
     end
     return false
@@ -1598,8 +1609,8 @@ end
 local function _tl_move_mag()
     local m = 0.0
     pcall(function()
-        if reframework:is_key_down(0x57) or reframework:is_key_down(0x41)
-            or reframework:is_key_down(0x53) or reframework:is_key_down(0x44) then m = 1.0 end
+        if _kb_down(0x57) or _kb_down(0x41)
+            or _kb_down(0x53) or _kb_down(0x44) then m = 1.0 end
     end)
     if m < 0.3 then
         pcall(function()
@@ -1630,8 +1641,7 @@ local function _tl_frame()
     if act then
         if _loading() or _menu_open() then return _tl_stop(_loading() and "loading" or "menu") end
         local kill = false
-        pcall(function() kill = reframework:is_key_down(0x08) == true end)
-        if kill then return _tl_stop("backspace") end
+        if _kb_down(0x08) then return _tl_stop("backspace") end
         if _tl_move_mag() > 0.3 or _binding_down("space, cross") then
             return _tl_stop("movement")
         end
@@ -2514,8 +2524,7 @@ local function _st_frame()
     local now = os.clock()
 
     local down = _exit_binding_down()
-    local kill = false
-    pcall(function() kill = reframework:is_key_down(0x08) == true end)
+    local kill = _kb_down(0x08)
     local edge_btn  = down and not ST.prev
     local edge_kill = kill and not ST.kill_prev
     ST.prev, ST.kill_prev = down, kill
