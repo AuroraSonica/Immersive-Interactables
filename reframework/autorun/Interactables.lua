@@ -2919,10 +2919,10 @@ re.on_draw_ui(function()
             imgui.tree_pop()
         end
 
-        c, M.dev = imgui.checkbox("show developer tools", M.dev == true)
-        if c then _save_cfg() end
-
+        -- dev mode has no public switch, set dev true in Interactables.json to get it back
         if M.dev then
+            c, M.dev = imgui.checkbox("show developer tools", M.dev == true)
+            if c then _save_cfg() end
             c, M.log = imgui.checkbox("write Interactables.log", M.log)
             if c then _save_cfg() end
         end
