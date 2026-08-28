@@ -2294,27 +2294,26 @@ local MEATS = {
 
 local TOAST = { txt = nil, at = 0 }
 local function _mc_toast(s) TOAST.txt, TOAST.at = s, os.clock() end
-pcall(function()
-    d2d.register(function() end, function()
-        if not TOAST.txt then return end
-        local age = os.clock() - TOAST.at
-        if age > 5.0 then TOAST.txt = nil return end
-        local a = 1.0
-        if age < 0.25 then a = age / 0.25
-        elseif age > 4.0 then a = 1.0 - (age - 4.0) end
-        local sh = 1080
-        pcall(function()
-            local ok, _, h = pcall(d2d.surface_size)
-            if ok and h and h > 0 then sh = h end
-        end)
-        local alpha = math.floor(255 * math.max(0, math.min(1, a)))
-        local F = _G.IrisFont
-        local col = alpha * 0x1000000 + 0xEAD8B0
-        if not (F and F.text and F.text(TOAST.txt, 84, sh - 176, col, 30)) then
-            pcall(function() draw.text(TOAST.txt, 84, sh - 176, alpha * 0x1000000 + 0xB0D8EA) end)
-        end
+
+-- ⛔ no d2d here. It registers a draw callback at load, which stays live even when
+-- the mod is switched off, and it is a suspect in the camp cooking crash.
+local function _mc_toast_draw()
+    if not TOAST.txt then return end
+    local age = os.clock() - TOAST.at
+    if age > 5.0 then TOAST.txt = nil return end
+    local a = 1.0
+    if age < 0.25 then a = age / 0.25
+    elseif age > 4.0 then a = 1.0 - (age - 4.0) end
+    local alpha = math.floor(255 * math.max(0, math.min(1, a)))
+    local sh = 1080
+    pcall(function()
+        local sz = imgui.get_display_size()
+        if sz and sz.y and sz.y > 0 then sh = sz.y end
     end)
-end)
+    pcall(function()
+        draw.text(TOAST.txt, 84, sh - 176, alpha * 0x1000000 + 0xB0D8EA)
+    end)
+end
 
 -- town cauldrons only, camps keep the game's own cooking
 local MC_POTS = {
@@ -3348,6 +3347,7 @@ end
 
 -- main loop
 re.on_frame(function()
+    pcall(_mc_toast_draw)
     _publish()
     if M.master == false then ST.player_addr = nil; return end
     -- the interact hook may only compare numbers, so hand it the address up front

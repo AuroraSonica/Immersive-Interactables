@@ -161,14 +161,26 @@ the crash was blamed first on the GimmickHolder hook, then on `cancelInteract`
 re-entrancy. The hook fixes were still worth keeping — the re-entrancy was genuinely
 unsafe (§3.1) — but neither was this crash.
 
-Still open: users report the same crash and attribute it to this mod. That has **not**
-been verified against a clean install. Next steps, in order:
-1. Test with **only** Immersive Interactables installed (Aurora runs a very large load
-   order; `IrisFarming` in particular has its own cook menu at pots).
-2. Test vanilla with no REFramework scripts at all — establish whether the crash exists
-   without any mod.
-3. Ask a reporting user for their `reframework_crash.dmp` faulting address. If it also
-   lands near `0x1449FAxxx`, it is the same underlying fault and not ours.
+⚠ **BUT the bisect above is weaker than it looks, and this is the live lead.**
+"Disabled" only stops `on_frame` work. The script is still **loaded**, and until
+2026-08-28 it called `d2d.register(...)` at load time for the cooking toast. A D2D draw
+callback:
+- is registered regardless of the master switch,
+- is re-registered on every restart while the file is installed,
+- cannot be unregistered at runtime,
+- and every user has it.
+
+That fits Aurora's crash (mod "off", still crashes) **and** the user reports, which
+`IrisFarming` cannot explain. **The `d2d.register` call has now been removed** — the
+toast draws through `draw.text` in `on_frame` instead.
+
+Next steps, in order:
+1. Retest camp cooking with the current build (no d2d). If it stops crashing, that was it.
+2. If it still crashes: **physically remove `Interactables.lua`** (rename it), restart,
+   cook. That is the only true "mod not present" test — disabling is not enough.
+3. If it still crashes with the file gone, the fault is elsewhere in the load order or in
+   vanilla; ask a reporting user for their `reframework_crash.dmp` faulting address. If
+   theirs also lands near `0x1449FAxxx` it is the same underlying fault.
 
 ### Deliberately not done
 - **Cooking other ingredients** (fish/herbs/fruit): DD2's pot cooking is the camp-meal
