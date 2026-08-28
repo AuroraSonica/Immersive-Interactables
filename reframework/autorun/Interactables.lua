@@ -47,8 +47,9 @@ local M = {
     st_cam_dist       = -1.2,
 
     anvil_prop = "eqit09_001",
-    pin_ox = 0.0, pin_oy = 0.0, pin_oz = 0.0,
-    pin_rx = 0.0, pin_ry = 0.0, pin_rz = 0.0,
+    pin_ox = -0.059, pin_oy = 0.016, pin_oz = -0.035,
+    pin_rx = -72.371, pin_ry = -24.124, pin_rz = 59.417,
+    master = true,
     dev = false,
 
     cfg_rev = 0,
@@ -2256,6 +2257,7 @@ end
 
 local CK = { req = false, open = false }
 re.on_application_entry("UpdateBehavior", function()
+    if M.master == false then return end
     -- give the freshly spawned prop a few frames to finish building, then use it directly
     if PIN.cook then
         local ck2 = PIN.cook
@@ -2562,8 +2564,10 @@ local function _st_frame()
                 ST.session = { id = id, rec = a.rec, key = a.key,
                                host = tostring((a.rec and a.rec.host) or a.key or "?"),
                                since = now }
-                ST.status = string.format("WORKING: %s - press B/F (or BACKSPACE) to stop",
-                    ST.session.host)
+                local nice = (a.key and STATIONS[a.key] and STATIONS[a.key].label)
+                    or ST.session.host
+                ST.status = string.format("Working: %s - press B/F (or BACKSPACE) to stop",
+                    tostring(nice))
                 _logf("station native session begun: %s", ST.session.host)
 
                 local strow = a.key and STATIONS[a.key]
@@ -2739,6 +2743,7 @@ end
 -- main loop
 re.on_frame(function()
     _publish()
+    if M.master == false then return end
     pcall(_tick)
     pcall(_unlock_tick)
     pcall(_native_session_tick)
@@ -2781,40 +2786,60 @@ re.on_draw_ui(function()
     if not imgui.tree_node("Immersive Interactables") then return end
     local c
 
-    c, M.enabled = imgui.checkbox("Sit anywhere - chairs, stools and benches", M.enabled)
+    c, M.master = imgui.checkbox("Enabled", M.master ~= false)
     if c then
         _save_cfg()
-        if not M.enabled then _drop_all(true); _restore_unlocks("seat") end
+        if M.master == false then
+            pcall(function() if ST.session then _st_release("master off") end end)
+            pcall(function() _tl_stop("master off") end)
+            pcall(function() _mc_stop_stir() end)
+            pcall(function() if MC.open then _mc_close() end end)
+            pcall(_pin_despawn)
+            pcall(function() _drop_all(true) end)
+            pcall(function() _restore_unlocks() end)
+            pcall(function()
+                if ST.cam_base ~= nil then
+                    local cm = sdk.get_managed_singleton("app.CameraManager")
+                    if cm then cm:call("set_DistanceOffset", ST.cam_base) end
+                    ST.cam_base = nil
+                end
+            end)
+        end
     end
 
-    c, M.stations = imgui.checkbox("Work anywhere - knead, smith, sweep, weave, cook and more",
-        M.stations ~= false)
-    if c then
-        _save_cfg()
-        if not M.stations then _restore_unlocks("station") end
-    end
-    imgui.text("      press B again (or BACKSPACE) to stop working")
+    if M.master ~= false then
+        imgui.text("Interact with:")
 
-    c, M.native_chores = imgui.checkbox("Villager tools - pick up brooms, pitchforks and bells",
-        M.native_chores)
-    if c then
-        if not M.native_chores then _restore_unlocks("chore") end
-        _save_cfg()
+        c, M.enabled = imgui.checkbox("Chairs, stools and benches", M.enabled)
+        if c then
+            _save_cfg()
+            if not M.enabled then _drop_all(true); _restore_unlocks("seat") end
+        end
+
+        c, M.native_beds = imgui.checkbox("Beds", M.native_beds)
+        if c then
+            if not M.native_beds then _restore_unlocks("bed") end
+            _save_cfg()
+        end
+
+        c, M.stations = imgui.checkbox("Workstations - knead, smith, sweep, weave, cook and more",
+            M.stations ~= false)
+        if c then
+            _save_cfg()
+            if not M.stations then _restore_unlocks("station") end
+        end
+
+        c, M.native_chores = imgui.checkbox("Loose tools - carry brooms and pitchforks",
+            M.native_chores)
+        if c then
+            if not M.native_chores then _restore_unlocks("chore") end
+            _save_cfg()
+        end
+
+        imgui.text("B interacts - B again (or BACKSPACE) stops or gets you back up")
     end
 
-    c, M.native_beds = imgui.checkbox("Sleep in beds - really lie down", M.native_beds)
-    if c then
-        if not M.native_beds then _restore_unlocks("bed") end
-        _save_cfg()
-    end
-    if M.native_beds then
-        imgui.text("      B (or BACKSPACE) gets you back up")
-    end
-
-    c, M.st_cam = imgui.checkbox("Close-up camera while working", M.st_cam ~= false)
-    if c then _save_cfg() end
-
-    if ST.session then
+    if M.master ~= false and ST.session then
         imgui.text(tostring(ST.status or ""))
         if imgui.button("Stop now") then _st_release("panel") end
     elseif ST.pending then
@@ -2829,30 +2854,27 @@ re.on_draw_ui(function()
         imgui.text("catalog missing - data/Interactables/catalog.json did not load")
     end
 
-    if imgui.tree_node("Advanced") then
-        imgui.text("Camera")
-        c, M.st_cam_dist = imgui.slider_float("close-up amount (drag the other way if inverted)",
-            M.st_cam_dist or -1.2, -3.0, 3.0)
+    if M.master ~= false and imgui.tree_node("Advanced") then
+        c, M.st_cam = imgui.checkbox("Close-up camera while working", M.st_cam ~= false)
         if c then _save_cfg() end
+        if M.st_cam ~= false then
+            c, M.st_cam_dist = imgui.slider_float(
+                "camera closeness (drag the other way if it zooms out)",
+                M.st_cam_dist or -1.2, -3.0, 3.0)
+            if c then _save_cfg() end
+        end
 
-        imgui.text("Seats")
-        c, M.range     = imgui.slider_float("seat range (m)", M.range or 12.0, 2.0, 30.0)
-        c, M.y_window  = imgui.slider_float("vertical window (m)", M.y_window or 2.5, 0.5, 8.0)
-        c, M.max_seats = imgui.slider_int("max seats at once", M.max_seats or 8, 1, 16)
-        c, M.seat_y    = imgui.slider_float("seat height offset (m)", M.seat_y or 0.0, -0.8, 0.8)
-        c, M.neuter_collision = imgui.checkbox(
-            "disable hidden seat colliders (only if you get wedged on thin air)",
-            M.neuter_collision)
-        if imgui.button("Save settings") then _save_cfg() end
-        imgui.same_line()
-        if imgui.button("Remove every hidden seat now") then _drop_all(true) end
+        c, M.seat_y = imgui.slider_float(
+            "sitting height (raise or lower yourself on seats)",
+            M.seat_y or 0.0, -0.8, 0.8)
+        if c then _save_cfg() end
 
         local ca
         ca, M.anvil_prop = imgui.input_text(
-            "smithing workpiece prefab (blank = none)", tostring(M.anvil_prop or ""))
+            "smithing workpiece (blank = empty hands)", tostring(M.anvil_prop or ""))
         if ca then _save_cfg() end
-        imgui.text("      held in the free hand while smithing, eqit09_001 is a sword")
-        if imgui.tree_node("Workpiece grip (live while smithing)") then
+        imgui.text("      the item held while smithing, eqit09_001 is a sword")
+        if imgui.tree_node("Workpiece grip (adjust live while smithing)") then
             c, M.pin_ox = imgui.slider_float("offset X (m)", M.pin_ox or 0.0, -0.5, 0.5)
             c, M.pin_oy = imgui.slider_float("offset Y (m)", M.pin_oy or 0.0, -0.5, 0.5)
             c, M.pin_oz = imgui.slider_float("offset Z (m)", M.pin_oz or 0.0, -0.5, 0.5)
@@ -2860,17 +2882,15 @@ re.on_draw_ui(function()
             c, M.pin_ry = imgui.slider_float("rotate Y (deg)", M.pin_ry or 0.0, -180.0, 180.0)
             c, M.pin_rz = imgui.slider_float("rotate Z (deg)", M.pin_rz or 0.0, -180.0, 180.0)
             if imgui.button("Reset grip") then
-                M.pin_ox, M.pin_oy, M.pin_oz = 0.0, 0.0, 0.0
-                M.pin_rx, M.pin_ry, M.pin_rz = 0.0, 0.0, 0.0
+                M.pin_ox, M.pin_oy, M.pin_oz = -0.059, 0.016, -0.035
+                M.pin_rx, M.pin_ry, M.pin_rz = -72.371, -24.124, 59.417
             end
             imgui.same_line()
             if imgui.button("Save grip") then _save_cfg() end
             imgui.tree_pop()
         end
 
-        imgui.text(string.format("Stations - %d point(s) unlocked",
-            _unlock_count("station")))
-        if imgui.tree_node("Station list (untick to relock one)") then
+        if imgui.tree_node("Workstation list (untick to turn one off)") then
             local keys = {}
             for k in pairs(STATIONS) do keys[#keys + 1] = k end
             table.sort(keys)
@@ -2897,11 +2917,13 @@ re.on_draw_ui(function()
             imgui.tree_pop()
         end
 
-        c, M.log = imgui.checkbox("write Interactables.log", M.log)
-        if c then _save_cfg() end
-
         c, M.dev = imgui.checkbox("show developer tools", M.dev == true)
         if c then _save_cfg() end
+
+        if M.dev then
+            c, M.log = imgui.checkbox("write Interactables.log", M.log)
+            if c then _save_cfg() end
+        end
 
         if M.dev and imgui.tree_node("Research (dev only)") then
             imgui.text("Session-only switches, never saved. Work loops entered through")

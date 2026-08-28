@@ -17,7 +17,9 @@ A Dragon's Dogma 2 mod that lets you live in the world the way NPCs do. Sit on a
 
 ## Install
 
-Drop the `reframework` folder from this mod into your Dragon's Dogma 2 game directory (the folder containing `DD2.exe`), merging with the existing `reframework` folder. Three files are added:
+**Fluffy Mod Manager (recommended):** install `packages/Immersive_Interactables_v1.0_FluffyMod.zip` like any other mod.
+
+**Manual:** drop the `reframework` folder from this mod into your Dragon's Dogma 2 game directory (the folder containing `DD2.exe`), merging with the existing `reframework` folder. Three files are added:
 
 ```
 reframework/autorun/Interactables.lua
