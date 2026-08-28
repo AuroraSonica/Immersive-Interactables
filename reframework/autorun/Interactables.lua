@@ -2869,6 +2869,7 @@ re.on_draw_ui(function()
             M.seat_y or 0.0, -0.8, 0.8)
         if c then _save_cfg() end
 
+        if M.dev then
         local ca
         ca, M.anvil_prop = imgui.input_text(
             "smithing workpiece (blank = empty hands)", tostring(M.anvil_prop or ""))
@@ -2888,6 +2889,7 @@ re.on_draw_ui(function()
             imgui.same_line()
             if imgui.button("Save grip") then _save_cfg() end
             imgui.tree_pop()
+        end
         end
 
         if imgui.tree_node("Workstation list (untick to turn one off)") then
