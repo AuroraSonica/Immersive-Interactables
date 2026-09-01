@@ -1,7 +1,3 @@
--- Immersive Interactables prompt bar
--- Draws button prompts in the game's own style. Shared with other mods that
--- use the same bar, so having several installed is fine.
-
 local M = {
     enabled = true,
     slot    = "PNL_R02",
@@ -187,8 +183,6 @@ _G.InteractablesPromptMessagePost = function(retval)
     return out
 end
 
--- REFramework cannot remove hooks on script reset. Install these once and route
--- through fresh global functions so repeated reloads never stack stale closures.
 if not _G.InteractablesPromptMessageHooksInstalled then
     local function pre(args)
         local f = rawget(_G, "InteractablesPromptMessagePre")

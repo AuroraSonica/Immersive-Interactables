@@ -1,7 +1,4 @@
--- Immersive Interactables
--- Sit, work, sleep and cook anywhere the world lets NPCs do it.
 
--- settings and defaults
 local M = {
     enabled       = true,
 
@@ -13,6 +10,7 @@ local M = {
 
     donor         = "gm80_257",
     seat_y        = 0.0,
+    tall_seat_y   = 0.25,
     dedup_radius  = 0.5,
 
     per_point     = true,
@@ -21,29 +19,32 @@ local M = {
     neuter_collision = false,
 
     scan_secs     = 0.5,
-    list_secs     = 5.0,
-    list_move     = 10.0,
+    list_secs     = 30.0,
+    list_move     = 30.0,
     budget        = 64,
-
-    log           = false,
+    position_budget = 48,
+    registry_budget = 24,
+    registry_slice_secs = 0.05,
 
     native_chores = true,
     native_beds   = true,
-
-    native_discovery = false,
-
-    native_workstations = false,
-    native_manager_exit = false,
-
-    dough_end_lab = false,
+    native_ambient = false,
     unlock_secs   = 1.0,
 
     follow_game_controls = true,
     interact_bind = "F",
+    rest_bind     = "space",
     stop_bind     = "backspace",
     drop_bind     = "backspace",
 
     stations       = true,
+    activity_groups = {
+        food = true,
+        everyday = true,
+        household = true,
+        outdoors = true,
+        trades = true,
+    },
     st_off         = {},
 
     st_cam            = true,
@@ -57,7 +58,6 @@ local M = {
     bed_rest = true,
     bed_rest_anywhere = true,
     tool_grip = {},
-    dev = false,
 
     cfg_rev = 0,
 }
@@ -65,14 +65,8 @@ local M = {
 local CFG  = "Interactables.json"
 local CATP = "Interactables/catalog.json"
 
-local function _log(s)
-    if not M.log then return end
-    pcall(function()
-        local f = io.open("Interactables.log", "a")
-        if f then f:write(os.date("[%H:%M:%S] ") .. tostring(s) .. "\n"); f:close() end
-    end)
-end
-local function _logf(...) _log(string.format(...)) end
+local function _log(_) end
+local function _logf(...) end
 
 local function _load_cfg()
     pcall(function()
@@ -85,11 +79,6 @@ local function _save_cfg()
         local out = {}
         for k, v in pairs(M) do out[k] = v end
 
-        out.dough_end_lab = false
-        out.native_workstations = false
-        out.native_manager_exit = false
-        out.native_discovery = false
-        out.native_lethal = false
         json.dump_file(CFG, out)
     end)
 end
@@ -106,20 +95,16 @@ if (tonumber(M.cfg_rev) or 0) < 4 then
     M.cfg_rev = 4
 end
 if (tonumber(M.cfg_rev) or 0) < 5 then
-    -- the pad bit we guessed for the stick click fires on its own and drops tools
     M.drop_bind = "backspace"
     M.bed_rest_anywhere = false
     M.cfg_rev = 5
 end
 if (tonumber(M.cfg_rev) or 0) < 6 then
-    -- these two shipped switched off, so nobody could sleep or pick up a tool
     M.native_beds = true
     M.native_chores = true
     M.cfg_rev = 6
 end
 if (tonumber(M.cfg_rev) or 0) < 7 then
-    -- Follow the game's CharacterInput action instead of assuming that F is still Interact.
-    -- The custom keys are fallbacks for builds where that action cannot be read.
     M.follow_game_controls = true
     M.interact_bind = "F"
     M.stop_bind = "backspace"
@@ -127,14 +112,44 @@ if (tonumber(M.cfg_rev) or 0) < 7 then
     M.bed_rest_anywhere = true
     M.cfg_rev = 7
 end
-
-M.dough_end_lab = false
-M.native_workstations = false
-M.native_manager_exit = false
-M.native_discovery = false
-
-M.native_lethal = false
-_G.Interactables_dough_hybrid_lab = false
+if (tonumber(M.cfg_rev) or 0) < 8 then
+    M.bed_rest = true
+    M.bed_rest_anywhere = true
+    M.keep_tools = true
+    M.cfg_rev = 8
+    _save_cfg()
+end
+if (tonumber(M.cfg_rev) or 0) < 9 then
+    M.list_secs = math.max(30.0, tonumber(M.list_secs) or 0)
+    M.list_move = math.max(30.0, tonumber(M.list_move) or 0)
+    M.position_budget = math.max(16, tonumber(M.position_budget) or 48)
+    M.registry_budget = math.max(8, tonumber(M.registry_budget) or 24)
+    M.registry_slice_secs = math.max(0.03, tonumber(M.registry_slice_secs) or 0.05)
+    M.cfg_rev = 9
+    _save_cfg()
+end
+if (tonumber(M.cfg_rev) or 0) < 10 then
+    M.cfg_rev = 10
+    _save_cfg()
+end
+if (tonumber(M.cfg_rev) or 0) < 11 then
+    M.activity_groups = M.activity_groups or {}
+    if M.stations == false then
+        M.activity_groups.food = false
+        M.activity_groups.everyday = false
+        M.activity_groups.household = false
+        M.activity_groups.outdoors = false
+        M.activity_groups.trades = false
+    end
+    M.stations = true
+    M.cfg_rev = 11
+    _save_cfg()
+end
+if (tonumber(M.cfg_rev) or 0) < 16 then
+    M.tall_seat_y = 0.25
+    M.cfg_rev = 16
+    _save_cfg()
+end
 
 local CAT, cat_n = {}, 0
 pcall(function()
@@ -143,8 +158,16 @@ pcall(function()
 end)
 
 local STATIONS
--- props you pick up and carry, they belong with the tools not the workstations
 local CARRY_KEYS = { gm51_046 = true }
+local LOOSE_TOOL_KEYS = {
+    gm50_007 = true, gm50_007_01 = true,
+    gm50_010_01 = true,
+    gm50_013 = true,
+    gm50_031 = true, gm50_031_01 = true,
+    gm50_096 = true, gm50_096_01 = true,
+    gm50_298 = true, gm50_298_01 = true,
+    gm51_046 = true,
+}
 
 local function _managed(o)
     if not o then return false end
@@ -232,6 +255,36 @@ local function _menu_open()
     return m
 end
 
+local CAMP_STATE = {
+    manager = nil, checked_at = -1000.0, active = false,
+    cook_station_keys = { gm50_020 = true },
+}
+
+function CAMP_STATE.is_active(force)
+    local now = os.clock()
+    if not force and now - (tonumber(CAMP_STATE.checked_at) or -1000.0) < 0.15 then
+        return CAMP_STATE.active == true
+    end
+    CAMP_STATE.checked_at = now
+    local manager = CAMP_STATE.manager
+    if not _managed(manager) then
+        manager = sdk.get_managed_singleton("app.CampManager")
+        CAMP_STATE.manager = manager
+    end
+    if not _managed(manager) then return CAMP_STATE.active == true end
+
+    local ok, active = pcall(function()
+        return manager:call("get_IsActiveCamp") == true
+    end)
+    if ok then CAMP_STATE.active = active == true end
+    return CAMP_STATE.active == true
+end
+
+function CAMP_STATE.is_fake_cook_station(key)
+    local k = tostring(key or ""):lower()
+    return CAMP_STATE.cook_station_keys[k] == true or k:match("^gm50_020") ~= nil
+end
+
 local PAD_ALIAS = {
     circle = 0x40080, east = 0x40080,
     cross = 0x20020, south = 0x20020,
@@ -267,7 +320,6 @@ local function _pad_button_mask()
     return mask
 end
 
--- reads the keyboard device directly so keys work on every REFramework build
 local function _kb_down(vk)
     local down = false
     pcall(function()
@@ -302,8 +354,6 @@ local function _binding_down(text)
     return false
 end
 
--- Reads the game's own player action flags. This is the same approach used by
--- Brinebound: keyboard/controller remaps reach us through CharacterInput.
 local NA = { flags = nil }
 local function _native_action_down(names)
     local result = nil
@@ -337,7 +387,7 @@ end
 local function _action_or_binding(actions, binding)
     if M.follow_game_controls ~= false then
         local down = _native_action_down(actions)
-        if down ~= nil then return down end
+        if down == true then return true end
     end
     return _binding_down(binding)
 end
@@ -348,7 +398,9 @@ end
 
 local function _stop_down()
     return _action_or_binding("Interact", M.stop_bind or "backspace")
+        or _action_or_binding({ "Dash", "KeepDash" }, "shift")
         or _binding_down(M.stop_bind or "backspace")
+        or _binding_down("east")
 end
 
 local L3_MASK = nil
@@ -395,13 +447,29 @@ local function _binding_label(text)
     return token:gsub("^%l", string.upper)
 end
 
-local function _io_of(go)
+local function _io_of(go, depth)
     local io = nil
+    depth = depth or 0
+    if not go or depth > 6 then return nil end
     pcall(function()
         for _, c in ipairs(_arr(go:call("get_Components"))) do
             local v = nil
             pcall(function() v = c.InteractiveObject end)
+            if not v then pcall(function() v = c:get_field("InteractiveObject") end) end
             if v then io = v; return end
+        end
+    end)
+    if io then return io end
+    pcall(function()
+        local tf = go:call("get_Transform")
+        local child = tf and tf:call("get_Child")
+        while child do
+            local cgo = child:call("get_GameObject")
+            if cgo then
+                io = _io_of(cgo, depth + 1)
+                if io then return end
+            end
+            child = child:call("get_Next")
         end
     end)
     return io
@@ -409,22 +477,29 @@ end
 
 local PLANT_KINDS = { CHAIR = true }
 
--- bed prefabs the game only gives to NPCs
 local BED_KEYS = {
     gm51_092 = true,
+    gm51_092_01 = true,
     gm51_299 = true,
     gm51_092_02 = true, gm51_100 = true, gm51_115 = true, gm51_115_01 = true,
     gm51_393 = true, gm51_396 = true, gm51_409 = true, gm51_409_01 = true,
     gm51_460 = true, gm51_603 = true, gm51_603_01 = true, gm51_742 = true,
 }
 
--- NPC benches, unlocked as plain seats using the game's own sit
 local SIT_KEYS = {
     gm51_074 = true,
     gm50_070 = true,
+    gm50_108 = true,
+    gm50_108_01 = true,
+    gm05_045 = true,
 }
 
--- objects we never touch
+local TALL_SEAT_KEYS = {
+    gm50_108 = true,
+    gm50_108_01 = true,
+    gm05_045 = true,
+}
+
 local BAN = {
     "gm80_054", "gm81_032",
     "gm05_046", "gm80_021", "gm80_022",
@@ -438,7 +513,6 @@ local BAN = {
     "gm81_117", "gm81_118", "gm81_119", "gm81_120", "gm81_126",
 }
 
--- the hidden seat prefabs
 local DONOR_NAMES = { "gm80_065", "gm80_066", "gm80_067", "gm80_068", "gm80_069",
                       "gm80_257", "gm80_166", "gmcamp", "gmseat" }
 
@@ -563,7 +637,6 @@ local function _spawn_pump()
     return nil
 end
 
--- collider on and off helpers
 local function _kill_colliders(go, depth, count)
     count = count or { n = 0 }
     if not go or (depth or 0) > 6 then return count.n end
@@ -600,7 +673,8 @@ local function _wake_colliders(go, depth, count)
     return count.n
 end
 
-local sc = { list_at = 0, at = 0, list = {}, complete = false, last_p = nil, ms = 0 }
+local sc = { list_at = -1e9, at = 0, list = {}, near = {}, sit_list = {}, complete = false,
+             last_p = nil, ms = 0, pos_cursor = 1 }
 local seats = {}
 local pending = nil
 local stats = { placed = 0, retired = 0, dedup = 0, failed = 0,
@@ -608,11 +682,94 @@ local stats = { placed = 0, retired = 0, dedup = 0, failed = 0,
 
 local unlocks = {}
 local unlock_at = 0
-local native_session = { key = nil }
-local native_last = "none yet"
-
 local _active_native, _st_release, _is_station_active, _st_log
-local ST = {}
+local ST = {
+    groups = {
+        { key = "food", label = "Food preparation" },
+        { key = "everyday", label = "Everyday life" },
+        { key = "household", label = "Household chores" },
+        { key = "outdoors", label = "Farming and forestry" },
+        { key = "trades", label = "Crafts and trades" },
+    },
+}
+
+function ST.player_interacting()
+    local open = nil
+    pcall(function()
+        local ch = _player()
+        local mgr = ch and sdk.get_managed_singleton("app.InteractManager")
+        if ch and mgr then open = mgr:call("isInteracting(app.Character)", ch) == true end
+    end)
+    return open
+end
+
+function ST.group_on(group)
+    return M.stations ~= false
+        and type(M.activity_groups) == "table"
+        and M.activity_groups[group] ~= false
+end
+
+function ST.activity_enabled(key)
+    local row = STATIONS and STATIONS[key]
+    return row ~= nil and ST.group_on(row.group)
+        and not (M.st_off or {})[key]
+end
+
+function ST.any_activity_enabled()
+    for key in pairs(STATIONS or {}) do
+        if ST.activity_enabled(key) then return true end
+    end
+    return false
+end
+
+function ST.seat_key_from_owner(go)
+    local found = nil
+    pcall(function()
+        local tf = go and go:call("get_Transform")
+        for _ = 1, 10 do
+            if not tf then break end
+            local node = tf:call("get_GameObject")
+            local name = node and tostring(node:call("get_Name")) or nil
+            local key = _norm(name)
+            if key and SIT_KEYS[key] then found = key; break end
+            tf = tf:call("get_Parent")
+        end
+    end)
+    return found
+end
+
+function ST.seat_key_near(point)
+    if not point then return nil end
+    local best, best_d2 = nil, 4.0
+    for _, e in ipairs(sc.sit_list or {}) do
+        local pos = e and e._p
+        if pos then
+            local dx, dy, dz = pos.x - point.x, pos.y - point.y, pos.z - point.z
+            local d2 = dx * dx + dy * dy + dz * dz
+            if d2 < best_d2 then best, best_d2 = e.nkey, d2 end
+        end
+    end
+    return best
+end
+
+function ST.restore_unlock(r)
+    if not (r and r.point) then return false end
+    return pcall(function()
+        r.point:set_field("CharacterType", r.old)
+        if r.old_icon ~= nil then r.point:set_field("IconType", r.old_icon) end
+    end)
+end
+
+function ST.restore_disabled_activities()
+    if ST.player_interacting() == true then return end
+    for addr, r in pairs(unlocks) do
+        if r.kind == "station" and not ST.activity_enabled(r.prop_key) then
+            local ok = ST.restore_unlock(r)
+            if ok then stats.restored = stats.restored + 1 end
+            unlocks[addr] = nil
+        end
+    end
+end
 
 local function _unlock_count(kind)
     local n = 0
@@ -621,12 +778,24 @@ local function _unlock_count(kind)
 end
 
 local function _restore_unlocks(kind)
+    if (kind == nil or kind == "seat") and ST.player_interacting() == true then
+        sc.restore_seats_when_clear = true
+        return
+    end
     for k, r in pairs(unlocks) do
         if not kind or r.kind == kind then
-            local ok = pcall(function()
-                r.point:set_field("CharacterType", r.old)
-                if r.old_icon ~= nil then r.point:set_field("IconType", r.old_icon) end
-            end)
+            local ok = ST.restore_unlock(r)
+            if ok then stats.restored = stats.restored + 1 end
+            unlocks[k] = nil
+        end
+    end
+end
+
+function CAMP_STATE.restore_cook_unlocks()
+    for k, r in pairs(unlocks) do
+        if r.kind == "station" and (CAMP_STATE.is_fake_cook_station(r.prop_key)
+                or CAMP_STATE.is_fake_cook_station(r.host)) then
+            local ok = ST.restore_unlock(r)
             if ok then stats.restored = stats.restored + 1 end
             unlocks[k] = nil
         end
@@ -636,30 +805,19 @@ end
 local function _unlock_kind(key)
     if not key then return nil end
 
-    if key == "gm10_030" and M.native_lethal ~= true then
-        return nil
-    end
-    if key == "gm50_022" and M.native_lethal ~= true and not
-            (M.stations ~= false and STATIONS and STATIONS[key]) then
+    if CAMP_STATE.is_active() and CAMP_STATE.is_fake_cook_station(key) then return nil end
+
+    if key == "gm10_030" then return nil end
+    if key == "gm50_022" and not ST.activity_enabled(key) then
         return nil
     end
 
-    if CARRY_KEYS[key] then
+    if M.enabled and SIT_KEYS[key] then return "seat" end
+    if LOOSE_TOOL_KEYS[key] then
         return M.native_chores and "chore" or nil
     end
-    if M.stations ~= false and STATIONS and STATIONS[key]
-            and not (M.st_off or {})[key] then
+    if ST.activity_enabled(key) then
         return "station"
-    end
-    if M.native_discovery then
-        local row = CAT[key]
-        local search = false
-        for _, verb in ipairs((row and row.v) or {}) do
-            if tostring(verb) == "Search" then search = true break end
-        end
-        if search and tonumber(row.pc) == 0 and not _banned(key) then
-            return BED_KEYS[key] and "bed" or "chore"
-        end
     end
     if M.native_chores and key:match("^gm50_") then return "chore" end
     if M.native_beds and BED_KEYS[key] then return "bed" end
@@ -679,8 +837,43 @@ local function _owner_is(owner, wanted)
     return matched
 end
 
+local function _ambient_owner(go)
+    if not _managed(go) then return nil end
+    local found = nil
+    pcall(function()
+        for _, comp in ipairs(_arr(go:call("get_Components"))) do
+            if _owner_is(comp, "app.GmAIInteract_01") then
+                found = comp
+                break
+            end
+        end
+    end)
+    return found
+end
+
+local BED_TYPE = nil
+pcall(function() BED_TYPE = sdk.typeof("app.Gm51_115") end)
+
+local function _bed_owner(go)
+    if not _managed(go) then return nil end
+    local bed = nil
+    if BED_TYPE then
+        pcall(function() bed = go:call("getComponent(System.Type)", BED_TYPE) end)
+        if _managed(bed) then return bed end
+    end
+    pcall(function()
+        for _, comp in ipairs(_arr(go:call("get_Components"))) do
+            if _owner_is(comp, "app.Gm51_115") then
+                bed = comp
+                break
+            end
+        end
+    end)
+    return _managed(bed) and bed or nil
+end
+
 local function _safe_chore_owner(owner, prop_key)
-    if (prop_key == "gm50_022" or prop_key == "gm10_030") and M.native_lethal ~= true then
+    if prop_key == "gm50_022" or prop_key == "gm10_030" then
         return false
     end
 
@@ -688,10 +881,9 @@ local function _safe_chore_owner(owner, prop_key)
 
     if _owner_is(owner, "app.GmInteractPickableBase") then return true end
 
-    return M.native_workstations == true or M.native_discovery == true
+    return false
 end
 
--- lets the player use an NPC only interaction
 local function _patch_search_point(point, kind, host, source, index, io, owner, prop_key)
     if not point then return false end
     if kind == "chore" and not _safe_chore_owner(owner, prop_key) then return false end
@@ -713,12 +905,13 @@ local function _patch_search_point(point, kind, host, source, index, io, owner, 
 
     local has_human = ct and (math.floor(ct / 8) % 2) == 1
 
-    -- seats keep whatever icon the game authored, other kinds must start unlabeled
     if kind ~= "seat"
         and (icon ~= 0 and not (kind == "bed" and (icon == 30 or icon == 22))) then
         return false
     end
-    if not ct or not has_human or (ct % 2) == 1 then return false end
+    if not ct or (kind ~= "seat" and not has_human) or (ct % 2) == 1 then
+        return false
+    end
 
     local new_ct = ct + 1
     local wrote = pcall(function() point:set_field("CharacterType", new_ct) end)
@@ -770,15 +963,20 @@ end
 
 local function _unlock_go(e)
     local key = _norm(e and e.name)
-    local kind = _unlock_kind(key)
+    if CAMP_STATE.is_active()
+            and CAMP_STATE.is_fake_cook_station(key or (e and e.name)) then return end
+    local bed_owner = M.native_beds ~= false and e and _bed_owner(e.go) or nil
+    local ambient_owner = M.native_ambient == true and e and _ambient_owner(e.go) or nil
+    local kind = bed_owner and "bed" or (ambient_owner and "ambient" or _unlock_kind(key))
     if not kind or not (e and e.go and _valid(e.go)) then return end
 
     for _, comp in ipairs(_arr(e.go:call("get_Components"))) do
-        local allow = kind == "chore" or kind == "station"
+        local allow = kind == "chore" or kind == "station" or kind == "seat"
         if kind == "bed" then
-            local tn = ""
-            pcall(function() tn = tostring(comp:get_type_definition():get_full_name()) end)
-            allow = tn == "app.Gm51_115"
+            allow = (bed_owner and _addr(comp) == _addr(bed_owner))
+                or _owner_is(comp, "app.Gm51_115")
+        elseif kind == "ambient" then
+            allow = ambient_owner and _addr(comp) == _addr(ambient_owner)
         end
         if allow then
             local authored, io = nil, nil
@@ -792,6 +990,15 @@ local function _unlock_go(e)
                 pcall(function() runtime = io:get_field("DataList") end)
                 _patch_data_list(runtime, kind, e.name, "runtime", io, comp, key)
             end
+        end
+    end
+
+    if kind == "seat" then
+        local io = _io_of(e.go)
+        if io then
+            local runtime = nil
+            pcall(function() runtime = io:get_field("DataList") end)
+            _patch_data_list(runtime, kind, e.name, "runtime-child", io, nil, key)
         end
     end
 end
@@ -831,159 +1038,197 @@ function _active_native()
                 key = _norm(raw) or raw:match("^(gm%d+_%d+_?%d*)")
             end
         end)
-        -- Player-authored home/inn beds need no CharacterType patch, so they are not
-        -- present in `unlocks`. Still recognise them as bed sessions. This lets us
-        -- start the lie-down animation while their own native rest UI remains in charge.
-        if not rec and M.native_beds ~= false and key and BED_KEYS[key] then
-            local bed = nil
-            pcall(function()
-                bed = owner_go:call("getComponent(System.Type)", sdk.typeof("app.Gm51_115"))
-            end)
-            if bed then
+        if not rec and M.enabled ~= false and owner_go then
+            local seat_key = ST.seat_key_from_owner(owner_go)
+            if seat_key then
+                key = seat_key
+                rec = { kind = "seat", native_player = true,
+                        host = seat_key, prop_key = seat_key, io = io,
+                        io_addr = _addr(io), index = no }
+            end
+        end
+        if rec and rec.kind == "bed" and not _managed(rec.owner) and owner_go then
+            local bed = _bed_owner(owner_go)
+            if _managed(bed) then rec.owner = bed end
+        end
+        if not rec and M.native_beds ~= false and owner_go then
+            local bed = _bed_owner(owner_go)
+            if _managed(bed) then
                 rec = { kind = "bed", native_player = true, owner = bed,
-                        host = tostring(key), prop_key = key, io = io,
+                        host = tostring(key or "Gm51_115"), prop_key = key, io = io,
+                        io_addr = _addr(io), index = no }
+            end
+        end
+        if not rec and M.enabled ~= false then
+            local q = nil
+            pcall(function() q = io:call("getInteractPointPosition", no or 0) end)
+            local seat_key = ST.seat_key_near(q)
+            if seat_key then
+                key = seat_key
+                rec = { kind = "seat", native_player = true,
+                        host = seat_key, prop_key = seat_key, io = io,
                         io_addr = _addr(io), index = no }
             end
         end
         out = { player = player, mgr = mgr, active = active,
-                io = io, point_no = no, rec = rec, key = key }
+                io = io, point_no = no, rec = rec, key = key, owner_go = owner_go }
     end)
     return out
 end
 
+function ST.sit_ik()
+    local ik = nil
+    pcall(function()
+        local ch = _player()
+        local human = ch and ch:call("get_Human")
+        local ctrl = human and human:call("get_BodyChangeIKCtrl")
+        if not ctrl and human then ctrl = human:get_field("BodyChangeIKCtrl") end
+        if not ctrl and human then ctrl = human:get_field("<BodyChangeIKCtrl>k__BackingField") end
+        if not ctrl then return end
+        ik = ctrl:call("get_AnimSitChairIK")
+        if not ik then ik = ctrl:get_field("AnimSitChairIK") end
+        if not ik then ik = ctrl:get_field("<AnimSitChairIK>k__BackingField") end
+    end)
+    return _managed(ik) and ik or nil
+end
+
+ST.tall_visual = { key = nil, player_addr = nil, hip_gap_y = nil }
+
+function ST.nullable_vec3(value)
+    if value == nil then return nil end
+    local function direct(v)
+        local x, y, z = nil, nil, nil
+        pcall(function() x, y, z = tonumber(v.x), tonumber(v.y), tonumber(v.z) end)
+        if x ~= nil and y ~= nil and z ~= nil then return { x = x, y = y, z = z } end
+        return nil
+    end
+    local row = direct(value)
+    if row then return row end
+    local has = nil
+    pcall(function() has = value:get_field("_HasValue") end)
+    if has == nil then pcall(function() has = value:get_field("HasValue") end) end
+    if has == nil then pcall(function() has = value:call("get_HasValue") end) end
+    if has == false then return nil end
+    local inner = nil
+    pcall(function() inner = value:get_field("_Value") end)
+    if inner == nil then pcall(function() inner = value:get_field("Value") end) end
+    if inner == nil then pcall(function() inner = value:call("get_Value") end) end
+    return direct(inner)
+end
+
+function ST.tall_visual_clear()
+    local visual = ST.tall_visual
+    visual.key, visual.player_addr, visual.hip_gap_y = nil, nil, nil
+end
+
+function ST.tall_visual_tick()
+    if M.master == false or M.enabled == false or _loading() then
+        ST.tall_visual_clear()
+        return
+    end
+    local ch = _player()
+    local go = _char_go(ch)
+    if not go then
+        ST.tall_visual_clear()
+        return
+    end
+    local fsm = go:call("getComponent(System.Type)", sdk.typeof("via.motion.MotionFsm2"))
+    local node = fsm and tostring(fsm:call("getCurrentNodeName", 0)) or ""
+    if not node:find("SitOnChair", 1, true) then
+        ST.tall_gate = "waiting: not in a chair-sit animation"
+        ST.tall_visual_clear()
+        return
+    end
+    local tf = go:call("get_Transform")
+    local pp = _pos(go)
+    local key = ST.seat_key_near(pp)
+    if not (tf and key and TALL_SEAT_KEYS[key]) then
+        ST.tall_gate = key and "seated: nearest seat is not a tall seat"
+            or "seated: no catalogued seat within 2m"
+        ST.tall_visual_clear()
+        return
+    end
+    local ik = ST.sit_ik()
+    local sit_value = nil
+    if ik then pcall(function() sit_value = ik:call("get_SitHipPos") end) end
+    if sit_value == nil and ik then
+        pcall(function() sit_value = ik:get_field("SitHipPos") end)
+    end
+    local sit = ST.nullable_vec3(sit_value)
+    local hip = tf:call("getJointByName", "Hip")
+    local hp = hip and hip:call("get_Position")
+    local lp = hip and hip:call("get_LocalPosition")
+    if not ik then ST.tall_gate = "tall seat: sit IK component unreadable" return end
+    if not sit then ST.tall_gate = "tall seat: SitHipPos empty (engine IK inactive)" return end
+    if not (hip and hp and lp) then ST.tall_gate = "tall seat: hip joint unreadable" return end
+    local pa = _addr(ch)
+    local visual = ST.tall_visual
+    if visual.key ~= key or visual.player_addr ~= pa or visual.hip_gap_y == nil then
+        visual.key, visual.player_addr = key, pa
+        visual.hip_gap_y = (tonumber(hp.y) or 0.0) - sit.y
+    end
+    local blend = 0.0
+    pcall(function() blend = tonumber(ik:call("get_HipAdjustBlendRate")) or 0.0 end)
+    if blend == 0.0 then
+        pcall(function() blend = tonumber(ik:get_field("HipAdjustBlendRate")) or 0.0 end)
+    end
+    blend = math.max(0.0, math.min(1.0, blend))
+    ST.tall_gate = blend > 0 and "lift active" or "tall seat: hip IK blend is 0"
+    local lift = math.max(0.0, math.min(0.50, tonumber(M.tall_seat_y) or 0.25)) * blend
+    local target_y = sit.y + visual.hip_gap_y + lift
+    local delta_y = target_y - (tonumber(hp.y) or target_y)
+    hip:call("set_LocalPosition", Vector3f.new(
+        tonumber(lp.x) or 0.0, (tonumber(lp.y) or 0.0) + delta_y,
+        tonumber(lp.z) or 0.0))
+end
+
+re.on_application_entry("PrepareRendering", function()
+    pcall(ST.tall_visual_tick)
+end)
+
 function _is_station_active(a)
     if not a then return false end
+    if CAMP_STATE.is_active() and CAMP_STATE.is_fake_cook_station(
+            (a.rec and a.rec.prop_key) or a.key) then return false end
     if a.rec and a.rec.kind == "station" then return true end
 
     if a.rec and a.rec.kind == "bed" then return true end
-    if a.key and STATIONS and STATIONS[a.key] and not (M.st_off or {})[a.key] then return true end
+    if a.key and ST.activity_enabled(a.key) then return true end
     return false
 end
 
-local function _native_session_tick()
-
-    if M.native_manager_exit ~= true then
-        native_session = { key = nil }
-        return
-    end
-    if not M.enabled or (not M.native_chores and not M.native_beds) or _menu_open() then
-        native_session = { key = nil }
-        return
-    end
-
-    local a = _active_native()
-    if not a or not a.rec then
-        native_session = { key = nil }
-        return
-    end
-    local skey = tostring(a.rec.io_addr) .. ":" .. tostring(a.point_no)
-    local now = os.clock()
-    if native_session.key ~= skey then
-        native_session = { key = skey, began = now, released = false,
-                           notified = false, cancel_requested = false,
-                           exit_press_at = nil, force_end_requested = false,
-                           io = a.io, point_no = a.point_no, player = a.player,
-                           prop_key = a.rec.prop_key, host = a.rec.host }
-        native_last = string.format("active %s: %s", tostring(a.rec.kind), tostring(a.rec.host))
-        _logf("active native %s: %s point %d",
-            tostring(a.rec.kind), tostring(a.rec.host), tonumber(a.point_no) or -1)
-    end
-
-    if now - native_session.began < 0.65 then return end
-
-    local down = _stop_down()
-    if not native_session.released then
-
-        if not down then
-            native_session.released = true
-            native_last = string.format("exit armed: %s", tostring(a.rec.host))
-        end
-        return
-    end
-
-    if not native_session.notified then
-        local ok = pcall(function()
-            a.mgr:call("notifyEnableInputAssginedToSameInputOfInteractOnInteracting")
-        end)
-        native_session.notified = true
-        native_last = string.format("exit input %s: %s", tostring(a.rec.host),
-            ok and "enabled" or "failed")
-        pcall(function() log.info(string.format(
-            "[Interactables] same-input exit enabled for %s: %s",
-            tostring(a.rec.host), tostring(ok))) end)
-    end
-
-    if down and not native_session.cancel_requested and not native_session.exit_press_at then
-
-        native_session.exit_press_at = now
-        pcall(function() log.info(string.format(
-            "[Interactables] exit button detected for %s", tostring(a.rec.host))) end)
-    end
-
-    if native_session.exit_press_at and not native_session.cancel_requested
-            and now - native_session.exit_press_at >= 0.12 then
-
-        native_session.cancel_requested = true
-        native_session.cancel_at = now
-        local ok, err = pcall(function()
-            a.mgr:call("cancelInteract(app.Character)", a.player)
-        end)
-        native_last = string.format("manager exit %s: %s", tostring(a.rec.host),
-            ok and "requested" or "failed")
-        pcall(function() log.info(string.format(
-            "[Interactables] manager cancelInteract for %s point %d: %s%s",
-            tostring(a.rec.host), tonumber(a.point_no) or -1, tostring(ok),
-            ok and "" or (" / " .. tostring(err)))) end)
-    end
-
-    if native_session.cancel_requested and native_session.cancel_at
-            and not native_session.force_end_requested
-            and now - native_session.cancel_at >= 6.0 then
-        native_session.force_end_requested = true
-        local ok, err = pcall(function()
-            a.mgr:call("endInteract(app.Character)", a.player)
-        end)
-        native_last = string.format("manager finalise %s: %s", tostring(a.rec.host),
-            ok and "requested" or "failed")
-        pcall(function() log.info(string.format(
-            "[Interactables] manager endInteract watchdog for %s point %d: %s%s",
-            tostring(a.rec.host), tonumber(a.point_no) or -1, tostring(ok),
-            ok and "" or (" / " .. tostring(err)))) end)
-    end
-end
-
--- rolling unlock pass
 local function _unlock_tick()
-    local stations_on = M.stations ~= false
-    if not M.enabled and not stations_on then
+    local stations_on = ST.any_activity_enabled()
+    local ambient_on = M.native_ambient == true
+    if CAMP_STATE.is_active() then CAMP_STATE.restore_cook_unlocks() end
+    if not M.enabled and not stations_on and not ambient_on then
         if next(unlocks) then _restore_unlocks() end
         return
     end
     if not M.enabled and next(unlocks) then
-        _restore_unlocks("chore"); _restore_unlocks("bed")
+        _restore_unlocks("chore"); _restore_unlocks("bed"); _restore_unlocks("seat")
     end
     if not stations_on and _unlock_count("station") > 0 then _restore_unlocks("station") end
+    if stations_on then ST.restore_disabled_activities() end
+    if not ambient_on and _unlock_count("ambient") > 0 then _restore_unlocks("ambient") end
     if M.enabled then
-        if not M.native_chores and not M.native_discovery
-                and _unlock_count("chore") > 0 then _restore_unlocks("chore") end
-        if not M.native_beds and not M.native_discovery
-                and _unlock_count("bed") > 0 then _restore_unlocks("bed") end
+        if not M.native_chores and _unlock_count("chore") > 0 then _restore_unlocks("chore") end
+        if not M.native_beds and _unlock_count("bed") > 0 then _restore_unlocks("bed") end
     end
     local want_native = M.enabled
-        and (M.native_chores or M.native_beds or M.native_discovery)
-    if not want_native and not stations_on then return end
+    if not want_native and not stations_on and not ambient_on then return end
     if _loading() or _menu_open() then return end
 
     local now = os.clock()
     if now - unlock_at < (M.unlock_secs or 1.0) then return end
     unlock_at = now
 
-    if (not M.enabled or #sc.list == 0)
-            and now - (tonumber(sc.list_at) or 0) > (M.list_secs or 5.0) then
-        sc.list_at = now
-        sc.complete = _refresh_list()
+    for _, e in ipairs(sc.near or {}) do
+        if now - (tonumber(e.unlock_at) or 0) >= 2.0 then
+            e.unlock_at = now
+            pcall(_unlock_go, e)
+        end
     end
-    for _, e in ipairs(sc.list) do pcall(_unlock_go, e) end
 end
 
 local function _seat_count()
@@ -993,19 +1238,41 @@ local function _seat_count()
 end
 
 local function _kill_seat(rec)
-    if not (rec and rec.go) then return end
+    if not (rec and rec.go) then return true end
+    if ST.player_interacting() == true then
+        rec.retire_when_clear = true
+        return false
+    end
     pcall(function()
         if _valid(rec.go) then rec.go:call("destroy(via.GameObject)", rec.go) end
     end)
     rec.go = nil
+    return true
 end
 
 local function _drop_all(destroy)
+    if destroy and ST.player_interacting() == true then
+        sc.drop_when_clear = true
+        return false
+    end
     for k, rec in pairs(seats) do
         if destroy then _kill_seat(rec) else rec.go = nil end
         seats[k] = nil
     end
     pending = nil
+    return true
+end
+
+local function _catalog_label(key)
+    local k = tostring(key or "")
+    for _ = 1, 4 do
+        local row = CAT[k]
+        if row and row.lb and tostring(row.lb) ~= "" then return tostring(row.lb) end
+        local shorter = k:gsub("_%d+$", "")
+        if shorter == k then break end
+        k = shorter
+    end
+    return ""
 end
 
 local function _refresh_list()
@@ -1023,12 +1290,21 @@ local function _refresh_list()
             if go and _valid(go) then
                 local nm = nil
                 pcall(function() nm = tostring(go:call("get_Name")) end)
-                built[#built + 1] = { go = go, name = nm or "?" }
+                built[#built + 1] = { go = go, name = nm or "?", nkey = _norm(nm) }
             end
         end
         ok = #built > 0
     end)
-    if ok then sc.list = built end
+    if ok then
+        sc.list = built
+        sc.near = {}
+        sc.pos_cursor = 1
+        local sits = {}
+        for _, e in ipairs(built) do
+            if e.nkey and SIT_KEYS[e.nkey] then sits[#sits + 1] = e end
+        end
+        sc.sit_list = sits
+    end
     return ok
 end
 
@@ -1063,9 +1339,30 @@ local function _donor_near(p, radius)
 end
 
 local function _tick()
-    if not M.enabled then if _seat_count() > 0 then _drop_all(true) end return end
+    local stations_on = ST.any_activity_enabled()
+    local ambient_on = M.native_ambient == true
+    local native_on = M.enabled and (M.native_chores or M.native_beds)
+    if not M.enabled and not stations_on and not native_on and not ambient_on then
+        if _seat_count() > 0 then _drop_all(true) end
+        return
+    end
     if _loading() or _menu_open() then return end
     local now = os.clock()
+    if sc.drop_when_clear and ST.player_interacting() ~= true then
+        sc.drop_when_clear = nil
+        _drop_all(true)
+        sc.list_at = -1e9
+        return
+    end
+    if sc.restore_seats_when_clear and ST.player_interacting() ~= true then
+        sc.restore_seats_when_clear = nil
+        _restore_unlocks("seat")
+    end
+    if sc.rescan_after then
+        if now < sc.rescan_after then return end
+        sc.rescan_after = nil
+        sc.list_at = -1e9
+    end
 
     if pending then
         local go = _spawn_pump()
@@ -1093,14 +1390,14 @@ local function _tick()
         local dx, dy, dz = pp.x - sc.last_p.x, pp.y - sc.last_p.y, pp.z - sc.last_p.z
         moved = math.sqrt(dx * dx + dy * dy + dz * dz)
     end
-    if now - sc.list_at > (M.list_secs or 5.0) or moved > (M.list_move or 10.0) then
+    if now - sc.list_at > (M.list_secs or 30.0) or moved > (M.list_move or 30.0) then
         sc.list_at = now
         sc.last_p = { x = pp.x, y = pp.y, z = pp.z }
         local t0 = os.clock()
         sc.complete = _refresh_list()
         sc.ms = (os.clock() - t0) * 1000.0
 
-        do
+        if M.neuter_collision or sc.had_neuter then
 
             sc.colstate = sc.colstate or {}
             local nd, healed = 0, 0
@@ -1126,10 +1423,25 @@ local function _tick()
                     end
                 end
             end
+            sc.had_neuter = M.neuter_collision == true
             if nd ~= (sc.neutered or -1) or healed > 0 then
                 sc.neutered = nd
                 _st_log("collider pass: " .. nd .. " rig seats neutered"
                     .. (healed > 0 and (", " .. healed .. " colliders re-enabled") or ""))
+            end
+        end
+    end
+
+    local nlist = #sc.list
+    if nlist > 0 then
+        local left = math.max(8, math.floor(tonumber(M.position_budget) or 48))
+        while left > 0 and sc.pos_cursor <= nlist do
+            local e = sc.list[sc.pos_cursor]
+            sc.pos_cursor = sc.pos_cursor + 1
+            left = left - 1
+            if e and e.go and _valid(e.go) then
+                local gp = _pos(e.go)
+                if gp then e._p = { x = gp.x, y = gp.y, z = gp.z } end
             end
         end
     end
@@ -1140,33 +1452,42 @@ local function _tick()
     local range, yw = (M.range or 12.0), (M.y_window or 2.5)
 
     local far = range * (M.hysteresis or 1.25)
-    local budget, truncated = (M.budget or 64), false
+    local budget, truncated = (M.budget or 64), sc.pos_cursor <= #sc.list
     for _, e in ipairs(sc.list) do
         if budget <= 0 then truncated = true; break end
-        if _valid(e.go) then
-            local gp = _pos(e.go)
-            if gp and math.abs(gp.y - pp.y) <= yw then
+        if e._p then
+            local gp = e._p
+            if math.abs(gp.y - pp.y) <= yw then
                 local dx, dz = gp.x - pp.x, gp.z - pp.z
-                local d = math.sqrt(dx * dx + dz * dz)
-                if d < far then
+                local d2 = dx * dx + dz * dz
+                if d2 < far * far then
                     if not e.done then budget = budget - 1 end
                     _resolve(e)
                     local k = nil
                     pcall(function() k = e.go:get_address() end)
                     if k then
-                        e._addr, e._d = k, d
+                        e._addr, e._d2 = k, d2
                         inrange[#inrange + 1] = e
                     end
                 end
             end
         end
     end
+    sc.near = inrange
+    if not M.enabled then
+        if _seat_count() > 0 then _drop_all(true) end
+        return
+    end
 
     for _, e in ipairs(inrange) do
-        if e.ok and (e._d or 1e9) < range and PLANT_KINDS[e.kind or ""] then
-            local np = tonumber((CAT[e.key] or {}).n) or 1
-            np = math.max(1, math.min(np, M.max_points or 4))
-            for p = 0, np - 1 do want[e._addr .. ":" .. p] = { e = e, point = p } end
+        if e.ok and (e._d2 or 1e18) < range * range and PLANT_KINDS[e.kind or ""] then
+            if _catalog_label(e.key):lower() ~= "stool" then
+                local np = tonumber((CAT[e.key] or {}).n) or 1
+                np = math.max(1, math.min(np, M.max_points or 4))
+                for p = 0, np - 1 do
+                    want[e._addr .. ":" .. p] = { e = e, point = p }
+                end
+            end
         end
     end
 
@@ -1180,13 +1501,14 @@ local function _tick()
             end
             if not keep then
                 for _, e in ipairs(inrange) do
-                    if e._addr == rec.addr and (e._d or 1e9) < far then keep = true; break end
+                    if e._addr == rec.addr and (e._d2 or 1e18) < far * far then keep = true; break end
                 end
             end
             if not keep or not (rec.go and _valid(rec.go)) then
-                _kill_seat(rec)
-                seats[k] = nil
-                stats.retired = stats.retired + 1
+                if _kill_seat(rec) then
+                    seats[k] = nil
+                    stats.retired = stats.retired + 1
+                end
             end
             ::continue::
         end
@@ -1200,7 +1522,9 @@ local function _tick()
             if gp then
                 local dx, dz = gp.x - pp.x, gp.z - pp.z
                 local d = dx * dx + dz * dz
-                if d < pd then pick, pd = { key = k, e = w.e, point = w.point }, d end
+                if d < pd then
+                    pick, pd = { key = k, e = w.e, point = w.point }, d
+                end
             end
         end
     end
@@ -1210,7 +1534,8 @@ local function _tick()
         local tf = pick.e.go:call("get_Transform")
         local up, rq = tf:call("get_UniversalPosition"), tf:call("get_Rotation")
         local p = ValueType.new(sdk.find_type_definition("via.Position"))
-        p.x, p.y, p.z = up.x, up.y + (M.seat_y or 0.0), up.z
+        local lift = M.seat_y or 0.0
+        p.x, p.y, p.z = up.x, up.y + lift, up.z
 
         if M.per_point ~= false then
             local io = _io_of(pick.e.go)
@@ -1220,7 +1545,7 @@ local function _tick()
                 if pt then
                     local dx, dy, dz = pt.x - up.x, pt.y - up.y, pt.z - up.z
                     if math.sqrt(dx * dx + dy * dy + dz * dz) < 8.0 then
-                        p.x, p.y, p.z = pt.x, pt.y + (M.seat_y or 0.0), pt.z
+                        p.x, p.y, p.z = pt.x, pt.y + lift, pt.z
                     end
                 end
             end
@@ -1242,13 +1567,12 @@ local function _tick()
     end)
 end
 
--- every workstation we unlock
 STATIONS = {
 
     gm50_022    = { bank = 8504, path = "appsystem/gimmick/gm50_027/gm50_022_interact_motlist.motlist", label = "Knead dough" },
     gm50_005    = { bank = 8507, path = "appsystem/gimmick/gminteract/gm50_005/gm50_005_interact_motlist.motlist", label = "Drink" },
     gm50_007_01 = { bank = 8509, path = "appsystem/gimmick/gm50_007/gm50_007_01_interact_motlist.motlist", label = "Sweep" },
-    gm50_010_01 = { bank = 8510, path = "appsystem/gimmick/gm50_010/gm50_010_interact_motlist.motlist", label = "Work" },
+    gm50_010_01 = { bank = 8510, path = "appsystem/gimmick/gm50_010/gm50_010_interact_motlist.motlist", label = "Use the hatchet" },
 
     gm50_132_01 = { bank = 8516, path = "appsystem/gimmick/gm50_016/gm50_016_01_interact_motlist.motlist", label = "Chop food" },
     gm50_011_01 = { bank = 8511, path = "appsystem/gimmick/gm50_011/gm50_011_interact_motlist.motlist", label = "Chop wood" },
@@ -1266,13 +1590,14 @@ STATIONS = {
     gm50_052_1  = { bank = 8522, path = "appsystem/gimmick/gm50_052/gm50_052_1_interact_motlist.motlist", label = "Dye cloth" },
     gm50_053    = { bank = 8523, path = "appsystem/gimmick/gminteract/gm50_053/gm50_053_interact_motlist.motlist", label = "Take notes" },
 
-    gm50_096    = { bank = 8524, path = "appsystem/gimmick/gm50_096/gm50_096_interact_motlist.motlist", label = "Pitch hay", conjure = 41 },
-    gm50_096_01 = { bank = 8524, path = "appsystem/gimmick/gm50_096/gm50_096_interact_motlist.motlist", label = "Pitch hay", conjure = 41 },
-    gm50_097    = { bank = 8525, path = "appsystem/gimmick/gm50_097/gm50_097_interact_motlist.motlist", label = "Work the hay", conjure = 41 },
+    gm50_096    = { bank = 8524, path = "appsystem/gimmick/gm50_096/gm50_096_interact_motlist.motlist", label = "Pitch hay" },
+    gm50_096_01 = { bank = 8524, path = "appsystem/gimmick/gm50_096/gm50_096_interact_motlist.motlist", label = "Pitch hay" },
+    gm50_097    = { bank = 8525, path = "appsystem/gimmick/gm50_097/gm50_097_interact_motlist.motlist", label = "Work the hay" },
     gm50_298    = { bank = 8526, path = "appsystem/gimmick/gm50_298/gm50_298_interact_motlist.motlist", label = "Dig" },
     gm50_298_01 = { bank = 8526, path = "appsystem/gimmick/gm50_298/gm50_298_interact_motlist.motlist", label = "Dig" },
     gm51_041_00 = { bank = 8527, path = "appsystem/gimmick/gm51_041/gm51_041_interact_motlist.motlist", label = "Tend the fire" },
     gm51_045    = { bank = 8528, path = "appsystem/gimmick/gm51_045/gm51_045_interact_motlist.motlist", label = "Polish" },
+    gm51_046    = { bank = 8529, path = "appsystem/gimmick/gm51_046/gm51_046_interact_motlist.motlist", label = "Carry wooden beams" },
     gm51_132    = { bank = 8530, path = "appsystem/gimmick/gm51_132/gm51_132_interact_motlist.motlist", label = "Weave" },
     gm51_133    = { bank = 8531, path = "appsystem/gimmick/gm51_133/gm51_133_interact_motlist.motlist", label = "Weave" },
     gm51_188_00 = { bank = 8532, path = "appsystem/gimmick/gm51_188/gm51_188_00_interact_motlist.motlist", label = "Work the forge" },
@@ -1286,14 +1611,50 @@ STATIONS = {
     gm50_259_01 = { label = "Chop wood" },
 }
 
-ST.prev, ST.kill_prev, ST.session, ST.pending, ST.at = false, false, nil, nil, 0
+STATIONS.gm50_022.group = "food"
+STATIONS.gm50_132_01.group = "food"
+STATIONS.gm50_016_01.group = "food"
+STATIONS.gm50_020.group = "food"
+
+STATIONS.gm50_005.group = "everyday"
+STATIONS.gm50_025.group = "everyday"
+STATIONS.gm50_053.group = "everyday"
+
+STATIONS.gm50_007_01.group = "household"
+STATIONS.gm50_013.group = "household"
+STATIONS.gm50_013_01.group = "household"
+STATIONS.gm50_013_02.group = "household"
+STATIONS.gm50_014_01.group = "household"
+STATIONS.gm51_041_00.group = "household"
+STATIONS.gm51_653.group = "household"
+
+STATIONS.gm50_010_01.group = "outdoors"
+STATIONS.gm50_011_01.group = "outdoors"
+STATIONS.gm50_031.group = "outdoors"
+STATIONS.gm50_031_01.group = "outdoors"
+STATIONS.gm50_096.group = "outdoors"
+STATIONS.gm50_096_01.group = "outdoors"
+STATIONS.gm50_097.group = "outdoors"
+STATIONS.gm50_298.group = "outdoors"
+STATIONS.gm50_298_01.group = "outdoors"
+STATIONS.gm50_259_01.group = "outdoors"
+
+STATIONS.gm50_041_01.group = "trades"
+STATIONS.gm50_052_1.group = "trades"
+STATIONS.gm51_045.group = "trades"
+STATIONS.gm51_046.group = "trades"
+STATIONS.gm51_132.group = "trades"
+STATIONS.gm51_133.group = "trades"
+STATIONS.gm51_188_00.group = "trades"
+STATIONS.gm82_053.group = "trades"
+STATIONS.gm82_053_01.group = "trades"
+STATIONS.gm50_045_00.group = "trades"
+
+ST.prev, ST.kill_prev, ST.jump_prev, ST.session, ST.pending, ST.at =
+    false, false, false, nil, nil, 0
 ST.status = "idle - the game offers its own prompt at each unlocked station"
 
--- station logging
-function _st_log(s)
-    pcall(function() log.info("[Interactables:ST] " .. tostring(s)) end)
-    _logf("ST %s", tostring(s))
-end
+function _st_log(_) end
 
 local function _st_motion()
     local go = _char_go(_player())
@@ -1302,7 +1663,6 @@ local function _st_motion()
     return m
 end
 
--- emergency release if the game gets stuck
 local function _st_release_hard(reason, rec)
     local ch = _player()
     if not ch then return end
@@ -1382,7 +1742,167 @@ local function _st_release_hard(reason, rec)
     _st_log("hard: END - " .. ST.status)
 end
 
--- stop the current station the safe way
+local EXIT_RECOVERY = { status = "not run", pending_at = nil }
+
+local function _player_action_name(ch, layer)
+    local name = nil
+    pcall(function()
+        local am = ch and ch:call("get_ActionManager")
+        if not am and ch then am = ch:get_field("<ActionManager>k__BackingField") end
+        if not am then return end
+        local list = am:get_field("CurrentActionList")
+        if not list then list = am:call("get_CurrentActionList") end
+        local item = list and list:call("get_Item", tonumber(layer) or 0)
+        if not item then return end
+        name = item:get_field("Name")
+        if name == nil then name = item:call("get_Name") end
+        if name ~= nil then name = tostring(name) end
+    end)
+    return name
+end
+
+local function _player_fsm_has_node(fragment)
+    local found = false
+    pcall(function()
+        local go = _char_go(_player())
+        local fsm = go and go:call("getComponent(System.Type)", sdk.typeof("via.motion.MotionFsm2"))
+        if not fsm then return end
+        local needle = tostring(fragment or ""):lower()
+        for tree = 0, 7 do
+            local node = fsm:call("getCurrentNodeName", tree)
+            if node and tostring(node):lower():find(needle, 1, true) then
+                found = true
+                return
+            end
+        end
+    end)
+    return found
+end
+
+local function _st_restore_player_after_native_exit(reason, reset_motion)
+    local ch = _player()
+    if not ch then return end
+    local before = _player_action_name(ch, 0) or "unknown"
+    local requested = false
+    local go = _char_go(ch)
+    pcall(function()
+        local aj = go and go:call("getComponent(System.Type)", sdk.typeof("app.AdjustJack"))
+        if aj then
+            aj:call("rejectSelf")
+            aj:call("restartOwnerProcess", true)
+            aj:call("enableOwnerFSM")
+        end
+    end)
+    pcall(function()
+        local human = ch:call("get_Human")
+        local fsm = human and human.Fsm
+        if fsm then fsm:set_Enabled(true) end
+        local am = ch:call("get_ActionManager")
+        if am then
+            am:call("requestActionCore(app.ActionManager.Priority, System.String, System.UInt32)",
+                10, "NormalLocomotion", 0)
+            requested = true
+        end
+    end)
+    local motion_reset = false
+    if reset_motion then
+        pcall(function()
+            local motion = _st_motion()
+            local layer = motion and motion:call("getLayer", 0)
+            if layer then
+                layer:call("changeMotion(System.UInt32, System.UInt32, System.Single, System.Single, via.motion.InterpolationMode, via.motion.InterpolationCurve)",
+                    0, 1, 0.0, 6.0, 1, 1)
+                motion_reset = true
+            end
+        end)
+    end
+    pcall(function() ch:call("setCharacterControllerEnable", true) end)
+    EXIT_RECOVERY.reason = tostring(reason or "native")
+    EXIT_RECOVERY.before = before
+    EXIT_RECOVERY.requested = requested
+    EXIT_RECOVERY.motion_reset = motion_reset
+    EXIT_RECOVERY.pending_at = os.clock() + 0.35
+    EXIT_RECOVERY.status = string.format("%s: %s -> requested=%s motion=%s",
+        EXIT_RECOVERY.reason, before, tostring(requested), tostring(motion_reset))
+end
+
+local IX = { at = 0, owned = false, kind = nil }
+
+local function _owned_seat_go(go)
+    local a = _addr(go)
+    if not a then return false end
+    for _, rec in pairs(seats) do
+        if rec.go and _addr(rec.go) == a then return true end
+    end
+    return false
+end
+
+local function _interaction_cleanup_tick()
+    local now = os.clock()
+    if now - (tonumber(IX.at) or 0) < 0.15 then return end
+    IX.at = now
+    if EXIT_RECOVERY.pending_at and now >= EXIT_RECOVERY.pending_at then
+        local after = _player_action_name(_player(), 0) or "unknown"
+        EXIT_RECOVERY.status = string.format("%s: %s -> %s (requested=%s motion=%s)",
+            tostring(EXIT_RECOVERY.reason or "native"),
+            tostring(EXIT_RECOVERY.before or "unknown"), after,
+            tostring(EXIT_RECOVERY.requested == true),
+            tostring(EXIT_RECOVERY.motion_reset == true))
+        EXIT_RECOVERY.pending_at = nil
+    end
+    if M.master == false then
+        IX.owned, IX.kind = false, nil
+        return
+    end
+    if _loading() or _menu_open() then return end
+
+    local ch = _player()
+    local jacked = nil
+    pcall(function() jacked = ch and ch:call("get_IsJacked") == true end)
+    if not IX.owned and jacked ~= true then return end
+
+    local a = _active_native()
+    local kind = nil
+    if a then
+        local key = _norm(a.key or (a.rec and a.rec.prop_key))
+        if a.rec and a.rec.kind == "station" then
+            kind = "station"
+        elseif a.rec and a.rec.kind == "seat" then
+            kind = "seat"
+        elseif a.rec and a.rec.kind == "bed" then
+            kind = "bed"
+        elseif a.rec and a.rec.kind == "ambient" then
+            kind = "ambient"
+        elseif key and ST.activity_enabled(key) and not LOOSE_TOOL_KEYS[key] then
+            kind = "station"
+        elseif _owned_seat_go(a.owner_go) then
+            kind = "seat"
+        end
+    end
+
+    if kind then
+        IX.owned, IX.kind = true, kind
+        return
+    end
+    if not IX.owned then return end
+    if a then
+        IX.owned, IX.kind = false, nil
+        return
+    end
+
+    local open = nil
+    pcall(function()
+        local mgr = ch and sdk.get_managed_singleton("app.InteractManager")
+        if ch and mgr then open = mgr:call("isInteracting(app.Character)", ch) end
+    end)
+    if open == false and jacked == false then
+        local ended = IX.kind
+        IX.owned, IX.kind = false, nil
+        _st_restore_player_after_native_exit(ended, ended == "bed")
+        _st_log("restored player after native " .. tostring(ended) .. " exit")
+    end
+end
+
 function _st_release(reason)
     local ch = _player()
     if not ch then return end
@@ -1391,6 +1911,11 @@ function _st_release(reason)
         local a = _active_native()
         rec = a and a.rec
     end)
+    if rec and rec.kind == "bed" then
+        _st_log("release: " .. tostring(reason or "manual")
+            .. " ignored for lying bed; native A/Jump is the only safe owner exit")
+        return
+    end
     local flagged = false
     _st_log("release: requesting native abort (" .. tostring(reason) .. ") on "
         .. tostring(rec and rec.host or (ST.session and ST.session.host) or "?"))
@@ -1434,7 +1959,6 @@ local function _st_native_busy_read()
     return b
 end
 
--- tools you can use from your hands
 local TOOLS = {
     gm50_007 = { verb = "Sweep", finish_verb = "Finish sweeping",
         cands = { { bank = 8509, path = "appsystem/gimmick/gm50_007/gm50_007_01_interact_motlist.motlist" },
@@ -1442,9 +1966,22 @@ local TOOLS = {
         names = { start  = "ch00_000_rol_sweep_idle_start",
                   loop   = "ch00_000_rol_sweep_idle_loop",
                   finish = "ch00_000_rol_sweep_idle_end" } },
+    gm50_010_01 = { verb = "Use hatchet", finish_verb = "Finish chopping",
+        cands = { { bank = 8510, path = "appsystem/gimmick/gm50_010/gm50_010_interact_motlist.motlist" } },
+        names = { start  = "ch00_000_rol_axe_idle_start",
+                  loop   = "ch00_000_rol_axe_idle_loop",
+                  finish = "ch00_000_rol_axe_idle_end" } },
+    gm50_031 = { verb = "Till soil", finish_verb = "Finish tilling",
+        cands = { { bank = 8519, path = "appsystem/gimmick/gm50_031/gm50_031_interact_motlist.motlist" } },
+        names = { start  = "ch00_000_rol_plow01_start",
+                  loop   = "ch00_000_rol_plow01_loop",
+                  finish = "ch00_000_rol_plow01_end" } },
+    gm50_096 = { verb = "Pitch hay", finish_verb = "Stop pitching",
+        cands = { { bank = 8524, path = "appsystem/gimmick/gm50_096/gm50_096_interact_motlist.motlist" } },
+        names = { start = "ch00_000_rol_feed01_end" } },
 }
 local TL = { at = 0, key = nil, act = nil, prev = false, raw = nil,
-             mounted = {}, holders = {}, clips = {}, res = {}, probed = {}, rtry = {} }
+             mounted = {}, holders = {}, clips = {}, res = {}, rtry = {} }
 
 TL.eqid = {
     [1]="it02_000", [2]="it02_002", [3]="it02_005", [44]="it02_008",
@@ -1539,13 +2076,16 @@ local function _tl_resolve(key)
             local map = _tl_clips(c.bank)
             if map then
                 readable = readable + 1
-                local ids = { start = map[row.names.start], loop = map[row.names.loop],
-                              finish = map[row.names.finish] }
-                if ids.start and ids.loop and ids.finish then
+                local ids = { start = map[row.names.start],
+                              loop = row.names.loop and map[row.names.loop] or nil,
+                              finish = row.names.finish and map[row.names.finish] or nil }
+                if ids.start and (not row.names.finish or ids.finish)
+                        and (not row.names.loop or ids.loop) then
                     TL.res[key] = { bank = c.bank, ids = ids }
                     TL.rtry[key] = nil
-                    _st_log(string.format("tool %s resolved: bank %d %d/%d/%d",
-                        key, c.bank, ids.start, ids.loop, ids.finish))
+                    _st_log(string.format("tool %s resolved: bank %d %s/%s/%s",
+                        key, c.bank, tostring(ids.start), tostring(ids.loop or "one-shot"),
+                        tostring(ids.finish or "self-finish")))
                     return TL.res[key]
                 end
             end
@@ -1570,49 +2110,6 @@ local function _tl_resolve(key)
         _st_log("tool " .. key .. " UNRESOLVED - clips never streamed in 8s")
     end
     return nil
-end
-
-local function _tl_probe_names(key)
-    if not key or TL.probed[key] then return end
-    local st = STATIONS[key]
-    if not (st and st.bank and st.path) then
-        local base = key:match("^(gm%d+_%d+)")
-        st = base and STATIONS[base] or nil
-    end
-    if not (st and st.bank and st.path) then
-        TL.probed[key] = true
-        _st_log("probe " .. key .. ": no verified motlist on record - nothing mounted")
-        return
-    end
-    if not _tl_mount(st.bank, st.path) then
-        TL.probed[key] = true
-        _st_log("probe " .. key .. ": motlist mount failed")
-        return
-    end
-
-    TL.probed[key] = { bank = st.bank, first = os.clock(), last = 0 }
-end
-
-local function _tl_probe_pump()
-    for key, p in pairs(TL.probed) do
-        if type(p) == "table" then
-            local now = os.clock()
-            if now - (p.last or 0) >= 0.5 then
-                p.last = now
-                local map = _tl_clips(p.bank)
-                if map then
-                    local names = {}
-                    for nm in pairs(map) do names[#names + 1] = nm end
-                    table.sort(names)
-                    _st_log("probe " .. key .. " clip names: " .. table.concat(names, " | "))
-                    TL.probed[key] = true
-                elseif now - (p.first or now) > 8.0 then
-                    _st_log("probe " .. key .. ": clips never streamed in 8s")
-                    TL.probed[key] = true
-                end
-            end
-        end
-    end
 end
 
 local function _tl_held_key()
@@ -1640,7 +2137,8 @@ local function _tl_held_key()
                 local ok = pcall(function()
                     local info = lst:call("get_Item", i)
                     local gib = info and info:get_field("Object")
-                    local nm = gib and tostring(gib:call("get_GameObject"):call("get_Name"))
+                    local g = _valid(gib) and gib:call("get_GameObject") or nil
+                    local nm = g and tostring(g:call("get_Name"))
                     if nm and nm ~= "" and nm ~= "nil" then raw = nm end
                 end)
                 if ok and raw then break end
@@ -1648,9 +2146,9 @@ local function _tl_held_key()
         end
 
         if not raw then
-            local gib = holder:get_field("PickableObject")
-            if gib then
-                pcall(function() raw = tostring(gib:call("get_GameObject"):call("get_Name")) end)
+        local gib = holder:get_field("PickableObject")
+        if _valid(gib) then
+            pcall(function() raw = tostring(gib:call("get_GameObject"):call("get_Name")) end)
                 if raw == "nil" or raw == "" then raw = nil end
             end
         end
@@ -1664,10 +2162,8 @@ local function _tl_held_key()
         if raw then
             _st_log("holding: " .. tostring(raw) .. " -> " .. tostring(key or "?")
                 .. ((key and TOOLS[key]) and "" or " (no tool row)"))
-            if key and not TOOLS[key] then _tl_probe_names(key) end
         end
     end
-    -- a tool we spawned into her hand counts just as much as a native hold
     if not (key and TOOLS[key]) and TL.carry_key and TOOLS[TL.carry_key] then
         return TL.carry_key
     end
@@ -1741,14 +2237,22 @@ local function _tl_move_mag()
     return m
 end
 
--- tool prompts and playback
 local function _tl_frame()
-    if M.stations == false then if TL.act then _tl_stop("disabled") end return end
-    _tl_probe_pump()
-
+    if M.native_chores ~= true then
+        if TL.act then _tl_stop("disabled") end
+        pcall(function()
+            local IP = _G.IrisPrompt
+            if IP and type(IP.clear) == "function" then IP.clear("interactables_tool") end
+        end)
+        TL.key = nil
+        return
+    end
+    local now = os.clock()
+    if TL.edge_at and now - TL.edge_at > 0.65 then TL.edge_at = nil end
     local down = _interact_down()
     local edge = down and not TL.prev
     TL.prev = down
+    if edge then TL.edge_at = now end
 
     local act = TL.act
     if act then
@@ -1757,9 +2261,14 @@ local function _tl_frame()
         if _tl_move_mag() > 0.3 or _binding_down("space, cross") then
             return _tl_stop("movement")
         end
-        if edge and act.phase ~= "finish" then
-            if not _tl_play("finish") then return _tl_stop("finish clip failed") end
-        elseif edge then
+        local action_edge = edge and now >= (act.accept_input_at or 0)
+        if action_edge and act.phase ~= "finish" then
+            if act.res.ids.finish then
+                if not _tl_play("finish") then return _tl_stop("finish clip failed") end
+            else
+                return _tl_stop("one-shot cancelled")
+            end
+        elseif action_edge then
             return _tl_stop("second press during finish")
         end
 
@@ -1772,7 +2281,13 @@ local function _tl_frame()
             local raw = elapsed * 60.0
             if act.phase ~= "loop" and ef > 1.0 and raw >= ef - 1.0 then
                 if act.phase == "start" then
-                    if not _tl_play("loop") then _tl_stop("loop clip failed") end
+                    if act.res.ids.loop then
+                        if not _tl_play("loop") then _tl_stop("loop clip failed") end
+                    elseif act.res.ids.finish and not _tl_play("finish") then
+                        _tl_stop("finish clip failed")
+                    elseif not act.res.ids.finish then
+                        _tl_stop("one-shot finished")
+                    end
                 else
                     _tl_stop("finished")
                 end
@@ -1797,7 +2312,6 @@ local function _tl_frame()
         return
     end
 
-    local now = os.clock()
     if now - (tonumber(TL.at) or 0) < 0.25 then return end
     TL.at = now
     if _loading() or _menu_open() or ST.session or ST.pending then TL.key = nil; return end
@@ -1829,12 +2343,11 @@ local function _tl_frame()
     pcall(function()
         IP.set("interactables_tool", tostring(row.verb), 1, 0.4, pgo and _pos(pgo), pgo)
     end)
-    if edge then
+    local use_edge = edge or (TL.edge_at and now - TL.edge_at <= 0.65)
+    if use_edge then
         local w = nil
         pcall(function() w = IP.winner() end)
         if w ~= "interactables_tool" then return end
-        local busy = _st_native_busy_read()
-        if busy then return end
         local res = _tl_resolve(TL.key)
         if not res then return end
         local ok = pcall(function()
@@ -1845,13 +2358,13 @@ local function _tl_frame()
             fsm:set_Enabled(false)
         end)
         if not ok then return end
-        TL.act = { key = TL.key, res = res }
+        TL.edge_at = nil
+        TL.act = { key = TL.key, res = res, accept_input_at = now + 0.8 }
         if not _tl_play("start") then _tl_stop("start clip failed") end
         _st_log("tool drive started: " .. TL.key .. " (" .. tostring(row.verb) .. ")")
     end
 end
 
--- puts a prop in the free hand
 local function _st_conjure(id, draw, quiet)
     local ok = false
 
@@ -1875,24 +2388,279 @@ local function _st_conjure(id, draw, quiet)
     return ok
 end
 
--- keeps a carried villager tool in hand when running shakes it loose
 local CARRY = { id = nil, conjured = false, prev_kill = false, at = 0 }
+local CARRY_OWNED_IDS = {
+    [41] = true,
+    [42] = true,
+    [51] = true,
+}
+local CARRY_PFBS = {}
+local CARRY_PREFETCHED = false
+
+local function _carry_owned_prefab(id)
+    local pfb = CARRY_PFBS[id]
+    if pfb then return pfb end
+    local raw = TL.eqid[id]
+    if not raw then return nil end
+    local eqit = raw:match("^eqit") and raw or (raw:match("^it") and ("eq" .. raw) or raw)
+    local ok = pcall(function()
+        pfb = sdk.create_instance("via.Prefab"):add_ref()
+        pcall(function() pfb:add_ref_permanent() end)
+        pcall(function() pfb:call(".ctor()") end)
+        pfb:call("set_Path", "AppSystem/Equipment/eqit/" .. eqit .. ".pfb")
+        pcall(function() pfb:call("set_Standby", true) end)
+    end)
+    if not (ok and pfb) then return nil end
+    CARRY_PFBS[id] = pfb
+    return pfb
+end
+
+local function _carry_owned_discard()
+    local go = CARRY.owned_go or (CARRY.owned_job and CARRY.owned_job.go)
+    if _valid(go) then
+        pcall(function() go:call("set_DrawSelf", false) end)
+        pcall(function() go:call("destroy", go) end)
+    end
+    CARRY.owned_go, CARRY.owned_job, CARRY.owned_id = nil, nil, nil
+    CARRY.owned_equip = false
+    CARRY.presented_logged = false
+end
+
+local function _carry_owned_prepare(id)
+    id = tonumber(id)
+    if not CARRY_OWNED_IDS[id] then return end
+    if CARRY.owned_id == id and (CARRY.owned_go or CARRY.owned_job) then return end
+    if CARRY.owned_go or CARRY.owned_job then _carry_owned_discard() end
+
+    local pfb = _carry_owned_prefab(id)
+    if not pfb then return end
+    CARRY.owned_id = id
+    CARRY.owned_job = { id = id, pfb = pfb, frames = 0 }
+end
+
+local function _carry_owned_pump()
+    local q = CARRY.owned_job
+    if not q then return end
+    q.frames = (q.frames or 0) + 1
+    if not q.go then
+        local ready = false
+        pcall(function() ready = q.pfb:call("get_Ready") == true end)
+        if ready then
+            local pgo = _char_go(_player())
+            local p = pgo and _pos(pgo)
+            local inst = nil
+            if p then
+                pcall(function()
+                    inst = q.pfb:call("instantiate(via.vec3)", Vector3f.new(p.x, p.y - 2.0, p.z))
+                end)
+                if not inst then
+                    pcall(function() inst = q.pfb:call("instantiate", Vector3f.new(p.x, p.y - 2.0, p.z)) end)
+                end
+            end
+            if inst then
+                q.go, q.frames = inst, 0
+                pcall(function() inst:call("set_DrawSelf", false) end)
+            end
+        elseif q.frames > 300 then
+            _st_log("carry: owned equipment prefab did not become ready")
+            _carry_owned_discard()
+        end
+        return
+    end
+
+    if q.frames < 8 then return end
+    local eq = nil
+    pcall(function()
+        eq = q.go:call("getComponent(System.Type)", sdk.typeof("app.PickableEquipItem"))
+    end)
+    if eq then
+        CARRY.owned_go = q.go
+        CARRY.owned_job = nil
+        _st_log("carry: exact " .. tostring(TL.eqid[q.id]) .. " equipment instance prepared")
+    elseif q.frames > 180 then
+        _st_log("carry: prepared prefab has no PickableEquipItem")
+        _carry_owned_discard()
+    end
+end
+
+local function _carry_owned_attach(holder)
+    if not (holder and _valid(CARRY.owned_go)) then
+        return false, "owned equipment instance was not ready"
+    end
+    local accepted = false
+    local ok, err = pcall(function()
+        local ctx = holder:get_field("Context")
+        if ctx and ctx:call("get_HasEquipItem") then ctx:call("removeEquipItem") end
+        holder:set_field("InteractObject", nil)
+        holder:set_field("PickableObject", nil)
+        holder:call("setEquipItem(via.GameObject)", CARRY.owned_go)
+        accepted = _managed(holder:get_field("EquipItem"))
+        if not accepted then error("GimmickHolder rejected owned equipment") end
+        CARRY.equip_go = CARRY.owned_go
+        CARRY.owned_equip = true
+        CARRY.retained = "equipment"
+        CARRY.loan_paused = false
+        if CARRY.upper_motion ~= nil then
+            holder:call("changeEquipItemUpperMotionID(System.UInt32)", CARRY.upper_motion)
+        end
+        holder:call("setDrawEquipItem(System.Boolean)", true)
+        CARRY.owned_go:call("set_DrawSelf", true)
+        holder:call("updateEquipItemHolding()")
+    end)
+    return ok and accepted, ok and nil or tostring(err)
+end
+
+local function _carry_owned_present(holder)
+    if not (holder and _valid(CARRY.owned_go)) then return false end
+    local accepted = false
+    local ok = pcall(function()
+        holder:call("setEquipItem(via.GameObject)", CARRY.owned_go)
+        local eq = holder:get_field("EquipItem")
+        accepted = _valid(eq)
+        if not accepted then return end
+        CARRY.equip_go = CARRY.owned_go
+        CARRY.owned_equip = true
+        if CARRY.upper_motion ~= nil then
+            holder:call("changeEquipItemUpperMotionID(System.UInt32)", CARRY.upper_motion)
+        end
+        holder:call("setDrawEquipItem(System.Boolean)", true)
+        CARRY.owned_go:call("set_DrawSelf", true)
+        holder:call("updateEquipItemHolding()")
+    end)
+    if ok and accepted and not CARRY.presented_logged then
+        CARRY.presented_logged = true
+        _st_log("carry: supplied missing pitchfork through GimmickHolder")
+    end
+    return ok and accepted
+end
+
+re.on_application_entry("UpdateBehavior", function()
+    if M.master == false then return end
+    if not CARRY_PREFETCHED then
+        CARRY_PREFETCHED = true
+        for id in pairs(CARRY_OWNED_IDS) do pcall(function() _carry_owned_prefab(id) end) end
+    end
+    pcall(_carry_owned_pump)
+end)
+
+local function _carry_source_visible(visible)
+    local wrote = false
+    pcall(function()
+        local go = CARRY.source_go
+        local mesh = go and go:call("getComponent(System.Type)", sdk.typeof("via.render.Mesh"))
+        if mesh then
+            mesh:call("set_Enabled", visible == true)
+            wrote = true
+        end
+        if _managed(CARRY.source_obj) then
+            pcall(function() CARRY.source_obj:set_field("IsJackNow", visible ~= true) end)
+        end
+    end)
+    if wrote then CARRY.source_hidden = visible ~= true end
+    return wrote
+end
+
+local function _carry_rebuild_return_context(holder)
+    if not (holder and _managed(CARRY.source_obj) and _valid(CARRY.source_go)) then
+        return false, "source gimmick expired"
+    end
+    local ctx = nil
+    pcall(function() ctx = holder:get_field("Context") end)
+    if not ctx or type(CARRY.context) ~= "table" then
+        return false, "borrow context was not captured"
+    end
+
+    local linked = pcall(function()
+        ctx:call("setEquipItem(app.GmInteractPickableBase)", CARRY.source_obj)
+        if CARRY.motion_id ~= nil then
+            ctx:call("setEquipItemMotionID(System.UInt32)", CARRY.motion_id)
+        end
+        holder:set_field("InteractObject", CARRY.source_obj)
+        holder:set_field("PickableObject", CARRY.source_obj)
+    end)
+    if not linked then return false, "source could not be relinked" end
+    return true
+end
+
+local function _carry_holder_is_empty(holder)
+    if not holder then return true end
+    local empty = false
+    local ok = pcall(function()
+        local has = holder:call("get_HasEquipItem") == true
+        local pickable = holder:get_field("PickableObject")
+        empty = not has and pickable == nil
+    end)
+    return ok and empty
+end
+
+local function _carry_detach_retained(holder)
+    if CARRY.retained ~= "equipment" or not holder then return false end
+
+    if CARRY.owned_equip then
+        pcall(function() holder:call("setDrawEquipItem(System.Boolean)", false) end)
+        pcall(function() holder:set_field("IsPreparingEquipItem", false) end)
+        pcall(function() holder:set_field("IsPreparedEquipItem", false) end)
+        pcall(function() holder:set_field("ConstraintEquipItem", nil) end)
+        pcall(function() holder:set_field("EquipItem", nil) end)
+        pcall(function() holder:set_field("InteractObject", nil) end)
+        pcall(function() holder:set_field("PickableObject", nil) end)
+        pcall(function()
+            local ctx = holder:get_field("Context")
+            if ctx and ctx:call("get_HasEquipItem") then ctx:call("removeEquipItem") end
+        end)
+        pcall(function() holder:call("changeEquipItemUpperMotionID(System.UInt32)", 0) end)
+        pcall(function() holder:call("updateEquipItemHolding()") end)
+        _carry_owned_discard()
+        CARRY.detached_cleaned = true
+        return _carry_holder_is_empty(holder)
+    end
+
+    if CARRY.loan_paused and _managed(CARRY.source_obj) and _valid(CARRY.source_go) then
+        pcall(function() CARRY.source_obj:call("set_IsBorrowed(System.Boolean)", true) end)
+    end
+
+    local returned = false
+    local ready, why = _carry_rebuild_return_context(holder)
+    if ready then
+        returned = pcall(function()
+            holder:call("forceReturnEquipItem(System.Boolean)", false)
+        end)
+    elseif _managed(CARRY.source_obj) and _valid(CARRY.source_go)
+            and _valid(CARRY.equip_go) then
+        returned = pcall(function()
+            CARRY.source_obj:call("returnEquipItem(via.GameObject)", CARRY.equip_go)
+        end)
+    end
+
+    pcall(function() holder:call("notifyEndInteract") end)
+    pcall(function()
+        local ctx = holder:get_field("Context")
+        if ctx and ctx:call("get_HasEquipItem") then ctx:call("removeEquipItem") end
+    end)
+    CARRY.detached_cleaned = true
+    local empty = _carry_holder_is_empty(holder)
+    return returned and empty
+end
 
 local function _carry_release(quiet)
-    if _valid(CARRY.go) then
+    if CARRY.retained == "equipment" and not CARRY.detached_cleaned then
         pcall(function()
-            local btf = CARRY.go:call("get_Transform")
-            btf:call("set_ParentJoint", "")
-            btf:call("set_Parent", nil)
+            local human = _player() and _player():call("get_Human")
+            local holder = human and human:call("get_GimmickHolder")
+            if holder then
+                _carry_detach_retained(holder)
+            end
         end)
-        pcall(function() CARRY.go:call("destroy", CARRY.go) end)
     end
-    if CARRY.cook and _valid(CARRY.cook.go) then
-        pcall(function() CARRY.cook.go:call("destroy", CARRY.cook.go) end)
-    end
-    CARRY.go, CARRY.job, CARRY.cook, CARRY.cands, CARRY.ci = nil, nil, nil, nil, nil
-    CARRY.warm = nil
-    CARRY.id, CARRY.conjured, CARRY.have, CARRY.lost_at = nil, false, false, nil
+    if CARRY.source_hidden then _carry_source_visible(true) end
+    if CARRY.owned_go or CARRY.owned_job then _carry_owned_discard() end
+    CARRY.source_go, CARRY.source_obj, CARRY.source_constraint = nil, nil, nil
+    CARRY.equip_go, CARRY.context, CARRY.upper_motion, CARRY.motion_id = nil, nil, nil, nil
+    CARRY.id, CARRY.conjured, CARRY.native, CARRY.have, CARRY.lost_at = nil, false, false, false, nil
+    CARRY.retained, CARRY.source_hidden, CARRY.detached_cleaned = false, false, false
+    CARRY.native_managed, CARRY.native_arm_until = false, nil
+    CARRY.loan_paused = false
+    CARRY.presented_logged = false
     TL.carry_key = nil
     pcall(function()
         local IP = _G.IrisPrompt
@@ -1900,34 +2668,119 @@ local function _carry_release(quiet)
     end)
 end
 
--- the tool is LENT, not taken, so the cleanest keep is to borrow it straight back
-local function _carry_reborrow()
-    local ok = false
+local function _carry_restore_native()
+    local obj, go, constraint = CARRY.source_obj, CARRY.source_go, CARRY.source_constraint
+    if not _managed(obj) and not _valid(go) then
+        return false, "captured scene object expired"
+    end
+
+    local accepted, err = false, nil
+    local ran, failure = pcall(function()
+        local human = _player() and _player():call("get_Human")
+        local holder = human and human:call("get_GimmickHolder")
+        if not holder then error("player has no GimmickHolder") end
+
+        if CARRY_OWNED_IDS[tonumber(CARRY.id)] then
+            local ok_owned, why_owned = _carry_owned_attach(holder)
+            if not ok_owned then error(why_owned) end
+            accepted = true
+            return
+        end
+
+        if _valid(CARRY.equip_go) then
+            local ctx = holder:get_field("Context")
+            if not ctx then error("player has no GimmickHolderContext") end
+
+            pcall(function() if ctx:call("get_HasEquipItem") then ctx:call("removeEquipItem") end end)
+            pcall(function() holder:set_field("InteractObject", nil) end)
+            pcall(function() holder:set_field("PickableObject", nil) end)
+            holder:call("setEquipItem(via.GameObject)", CARRY.equip_go)
+            local attached = holder:get_field("EquipItem")
+            accepted = _managed(attached)
+            if accepted then
+                CARRY.retained = "equipment"
+                if _managed(obj) and _valid(go) then
+                    local paused = pcall(function()
+                        obj:call("set_IsBorrowed(System.Boolean)", false)
+                    end)
+                    CARRY.loan_paused = paused
+                end
+                _carry_source_visible(false)
+            end
+        elseif _managed(obj) and constraint ~= nil then
+            local ok_add, why = pcall(function()
+                holder:call("addConstraintObject(app.GmInteractBase, app.ConstraintGimmickTrack.ConstraintType)",
+                    obj, constraint)
+            end)
+            if not ok_add then error(why) end
+            accepted = true
+            if CARRY.upper_motion ~= nil then
+                pcall(function()
+                    holder:call("changeEquipItemUpperMotionID(System.UInt32)", CARRY.upper_motion)
+                end)
+            end
+            pcall(function() holder:call("updateEquipItemHolding()") end)
+            return
+        elseif _managed(obj) then
+            error("the native PickableEquipItem expired before it could be retained")
+        end
+
+        if accepted and CARRY.upper_motion ~= nil then
+            pcall(function()
+                holder:call("changeEquipItemUpperMotionID(System.UInt32)", CARRY.upper_motion)
+            end)
+        end
+        if accepted then
+            pcall(function() holder:call("setDrawEquipItem(System.Boolean)", true) end)
+            pcall(function() holder:call("updateEquipItemHolding()") end)
+        end
+    end)
+    if not ran then err = "native restore failed: " .. tostring(failure) end
+    return ran and accepted, err or (accepted and nil or "no native restore route was captured")
+end
+
+local function _carry_maintain_loan()
+    if not CARRY.retained or not _managed(CARRY.source_obj) then return end
     pcall(function()
         local human = _player() and _player():call("get_Human")
         local holder = human and human:call("get_GimmickHolder")
         if not holder then return end
-        local td = sdk.find_type_definition("app.GimmickHolder")
-        for _, mm in ipairs((td and td:get_methods()) or {}) do
-            local nm
-            pcall(function() nm = mm:get_name() end)
-            if nm == "borrowEquipItem" then
-                pcall(function() mm:call(holder); ok = true end)
-            end
+        if CARRY.retained ~= "equipment" then
+            holder:set_field("InteractObject", CARRY.source_obj)
+            holder:set_field("PickableObject", CARRY.source_obj)
         end
+        pcall(function() holder:call("setDrawEquipItem(System.Boolean)", true) end)
+        pcall(function() holder:call("updateEquipItemHolding()") end)
     end)
-    return ok
 end
 
--- ⛔ never hook this subsystem, a log only hook here crashed cooking in the dispatch stub
+local function _carry_adopt_native()
+    local go = CARRY.source_go
+    if not _valid(go) then return false, "captured GameObject expired" end
+    local pickup = nil
+    pcall(function()
+        pickup = go:call("getComponent(System.Type)", sdk.typeof("app.PickUpController"))
+    end)
+    if not pickup then return false, "scene object has no PickUpController" end
 
--- hands the borrowed tool back on purpose
+    local carried, err = false, nil
+    local ran = pcall(function()
+        local ch = _player()
+        local oc = ch and ch:call("get_ObjectCarry")
+        if not oc then error("player has no ObjectCarry") end
+        oc:call("set_IsContinue(System.Boolean)", true)
+        oc:call("pickupObject(via.GameObject)", go)
+        carried = oc:call("isPickupCarrying") == true
+    end)
+    if not ran then err = "pickupObject failed" end
+    if carried then CARRY.native, CARRY.conjured = true, false end
+    return carried, err or (carried and nil or "ObjectCarry refused the scene object")
+end
+
 local function _carry_native_drop()
     local done = false
     pcall(function()
         local ch = _player()
-        -- Beams, logs and other two-handed scene props use ObjectCarry rather than
-        -- GimmickHolder. Keep their native pose and use the game's own put-down.
         local oc = ch and ch:call("get_ObjectCarry")
         if oc and oc:call("isPickupCarrying") == true then
             oc:call("putObject")
@@ -1937,95 +2790,25 @@ local function _carry_native_drop()
         local human = ch and ch:call("get_Human")
         local holder = human and human:call("get_GimmickHolder")
         if not holder then return end
-        local td = sdk.find_type_definition("app.GimmickHolder")
-        for _, mm in ipairs((td and td:get_methods()) or {}) do
-            local nm
-            pcall(function() nm = mm:get_name() end)
-            if nm == "returnEquipItem" then
-                pcall(function() mm:call(holder, true); done = true end)
-            end
+        local lent = holder:get_field("PickableObject")
+        local eqit = holder:get_field("EquipItem")
+        if not (lent or eqit) then return end
+        if CARRY.retained == "equipment" then
+            done = _carry_detach_retained(holder)
+            if CARRY.source_hidden then _carry_source_visible(true) end
+            return
         end
+        pcall(function() holder:call("forceReturnEquipItem(System.Boolean)", false) end)
+        pcall(function() holder:call("notifyEndInteract") end)
+        pcall(function()
+            local ctx = holder:get_field("Context")
+            if ctx and ctx:call("get_HasEquipItem") then ctx:call("removeEquipItem") end
+        end)
+        done = _carry_holder_is_empty(holder)
+        CARRY.detached_cleaned = true
+        if CARRY.source_hidden then _carry_source_visible(true) end
     end)
     return done
-end
-
--- every tool prefab has its own origin, so each needs its own hand offset
-local function _carry_grip(id)
-    local g = (M.tool_grip or {})[tostring(id)]
-    if type(g) ~= "table" then return 0, 0, 0, 0, 0, 0 end
-    return tonumber(g[1]) or 0, tonumber(g[2]) or 0, tonumber(g[3]) or 0,
-           tonumber(g[4]) or 0, tonumber(g[5]) or 0, tonumber(g[6]) or 0
-end
-
-local function _carry_apply_grip()
-    if not (CARRY.go and CARRY.id) then return end
-    local ox, oy, oz, rx, ry, rz = _carry_grip(CARRY.id)
-    pcall(function()
-        local btf = CARRY.go:call("get_Transform")
-        btf:call("set_LocalPosition", Vector3f.new(ox, oy, oz))
-        local d = math.pi / 360
-        local cx, sx = math.cos(rx * d), math.sin(rx * d)
-        local cy, sy = math.cos(ry * d), math.sin(ry * d)
-        local cz, sz = math.cos(rz * d), math.sin(rz * d)
-        local q = ValueType.new(sdk.find_type_definition("via.Quaternion"))
-        q.w = cy * cx * cz + sy * sx * sz
-        q.x = cy * sx * cz + sy * cx * sz
-        q.y = sy * cx * cz - cy * sx * sz
-        q.z = cy * cx * sz - sy * sx * cz
-        btf:call("set_LocalRotation", q)
-    end)
-end
-
--- prefabs are kept once loaded, so the second pickup of a tool is instant
-local PFB_CACHE = {}
-local function _carry_pfb(name)
-    if PFB_CACHE[name] then return PFB_CACHE[name] end
-    local pfb
-    local ok = pcall(function()
-        pfb = sdk.create_instance("via.Prefab"):add_ref()
-        pcall(function() pfb:add_ref_permanent() end)
-        pcall(function() pfb:call(".ctor()") end)
-        pfb:call("set_Path", "AppSystem/Equipment/eqit/" .. name .. ".pfb")
-        pcall(function() pfb:call("set_Standby", true) end)
-    end)
-    if ok and pfb then PFB_CACHE[name] = pfb end
-    return PFB_CACHE[name]
-end
-
-local function _carry_names(id)
-    local base = TL.eqid[id]
-    if not base then return nil end
-    return { "eq" .. base, "eq" .. base .. "_00", base }
-end
-
--- start the prefab loading the moment she picks a tool up, not when it falls
-local function _carry_warm(id)
-    if CARRY.warm == id then return end
-    local names = _carry_names(id)
-    if not names then return end
-    CARRY.warm = id
-    _carry_pfb(names[1])
-end
-
--- spawns a copy of the tool prefab, the same recipe as the anvil workpiece
-local _carry_try_next
-_carry_try_next = function()
-    CARRY.ci = (CARRY.ci or 0) + 1
-    local name = CARRY.cands and CARRY.cands[CARRY.ci]
-    if not name then
-        _st_log("carry: no equip prefab found for this tool")
-        return
-    end
-    local pfb = _carry_pfb(name)
-    if pfb then CARRY.job = { pfb = pfb, f = 0, name = name } end
-end
-
-local function _carry_spawn(id)
-    local names = _carry_names(id)
-    if not names then _st_log("carry: unknown eq id " .. tostring(id)); return end
-    CARRY.cands = names
-    CARRY.ci = 0
-    _carry_try_next()
 end
 
 local function _carry_tick()
@@ -2033,44 +2816,104 @@ local function _carry_tick()
         CARRY.allow_drop = true
         _carry_release(); return
     end
-    if ST.session or ST.conjured then _carry_release(); return end
+
+    if ST.session or ST.pending or ST.conjured then
+        CARRY.stand_down_until = os.clock() + 2.0
+        if CARRY.have or CARRY.owned_go or CARRY.owned_job then _carry_release() end
+        return
+    end
     local now = os.clock()
+    if now < (tonumber(CARRY.stand_down_until) or 0) then return end
+
+    if not CARRY.have and now - (tonumber(CARRY.poll_at) or 0) < 0.10 then return end
+    CARRY.poll_at = now
 
     local kill = _drop_down()
     local edge_kill = kill and not CARRY.prev_kill
     CARRY.prev_kill = kill
 
-    -- the hold can live in any of three fields, a bare Context read misses a plain carry
     local held, id, nm = false, 0, nil
+    local unmanaged_native = false
+    local source_go, source_obj, equip_go, source_constraint, upper_motion, motion_id = nil, nil, nil, nil, nil, nil
+    local holder_ref = nil
+    local saved_context = {}
     pcall(function()
-        local human = _player() and _player():call("get_Human")
+        local ch = _player()
+        local oc = ch and ch:call("get_ObjectCarry")
+        if oc and oc:call("isPickupCarrying") == true then
+            local armed = CARRY.native_managed == true
+                or now <= (tonumber(CARRY.native_arm_until) or 0)
+            if not armed then
+                unmanaged_native = true
+                return
+            end
+            CARRY.native_managed = true
+            held, CARRY.native = true, true
+            source_go = oc:get_field("Object")
+            pcall(function() oc:call("set_IsContinue(System.Boolean)", true) end)
+            return
+        end
+
+        local human = ch and ch:call("get_Human")
         local holder = human and human:call("get_GimmickHolder")
         if not holder then return end
+        holder_ref = holder
         local ctx = holder:get_field("Context")
         local v = ctx and ctx:get_field("EquipItemID")
         id = tonumber(v) or 0
         if id == 0 and v ~= nil then
             pcall(function() id = tonumber(v:get_field("value__")) or 0 end)
         end
-        if id ~= 0 then held = true; return end
+        if ctx then
+            for _, field in ipairs({ "EquipItemID", "EquipItemMotionID",
+                    "BollowedGimmickID", "BollowedGimmickPosition" }) do
+                pcall(function() saved_context[field] = ctx:get_field(field) end)
+            end
+            pcall(function() motion_id = tonumber(ctx:get_field("EquipItemMotionID")) end)
+        end
+        pcall(function() upper_motion = holder:call("get_UpperMotionID") end)
+        if id ~= 0 then
+            held = true
+            pcall(function()
+                local eq = holder:get_field("EquipItem")
+                equip_go = _valid(eq) and eq:call("get_GameObject") or nil
+                nm = equip_go and tostring(equip_go:call("get_Name"))
+            end)
+        end
+        if CARRY.retained == "equipment" then
+            local eq = holder:get_field("EquipItem")
+            local eg = _valid(eq) and eq:call("get_GameObject") or nil
+            if eg then
+                held, id, equip_go = true, tonumber(CARRY.id) or id, eg
+                nm = tostring(eg:call("get_Name"))
+            end
+        end
         local lst = holder:get_field("HoldObjects")
         if lst and (tonumber(lst:call("get_Count")) or 0) > 0 then
             held = true
             pcall(function()
                 local info = lst:call("get_Item", 0)
                 local gib = info and info:get_field("Object")
-                nm = gib and tostring(gib:call("get_GameObject"):call("get_Name"))
+                local g = _valid(gib) and gib:call("get_GameObject") or nil
+                if g then
+                    source_obj, source_go = gib, g
+                    source_constraint = info:get_field("ConstraintType")
+                    nm = tostring(g:call("get_Name"))
+                end
             end)
         end
-        if not held then
-            local gib = holder:get_field("PickableObject")
-            if gib then
-                held = true
-                pcall(function() nm = tostring(gib:call("get_GameObject"):call("get_Name")) end)
-            end
+        local gib = holder:get_field("PickableObject")
+        if _valid(gib) then
+            held = true
+            pcall(function()
+                local g = gib:call("get_GameObject")
+                if g then
+                    source_obj, source_go = gib, g
+                    nm = tostring(g:call("get_Name"))
+                end
+            end)
         end
         if held and nm then
-            -- match by digit core so gimmick names (gm50_007) still map to equip ids (it50_007)
             local low = nm:lower()
             local best, bl = 0, 0
             for k, v2 in pairs(TL.eqid) do
@@ -2081,8 +2924,13 @@ local function _carry_tick()
         end
     end)
 
+    if unmanaged_native then
+        if CARRY.have then _carry_release(true) end
+        CARRY.prev_kill = _drop_down()
+        return
+    end
+
     if edge_kill then
-        -- let the game take its own tool back, then clear anything we spawned
         CARRY.allow_drop = true
         local gave = _carry_native_drop()
         CARRY.kept_logged = false
@@ -2095,259 +2943,98 @@ local function _carry_tick()
         CARRY.allow_drop, CARRY.drop_until = false, nil
     end
 
-    -- B belongs to the world and to the tool's own verb, dropping lives on its own bind
-
     if held then
         if CARRY.conjured then _carry_release(true) end
-        if id ~= 0 and CARRY.id ~= id and M.dev then
-            _st_log(string.format("carry: holding eq id %d (%s)", id, tostring(nm or "Context")))
+        if id ~= 0 then
+            CARRY.id = id
+            _carry_owned_prepare(id)
+
+            local eraw = TL.eqid[id]
+            local twin = eraw and eraw:lower():match("^i?t(%d+_%d+.*)$")
+            local ekey = twin and _norm("gm" .. twin) or nil
+            TL.carry_key = ekey and TOOLS[ekey] and ekey or nil
+
+            if id == 41 and not _valid(equip_go) and holder_ref
+                    and _valid(CARRY.owned_go) and _carry_owned_present(holder_ref) then
+                equip_go = CARRY.owned_go
+                nm = tostring(equip_go:call("get_Name"))
+            end
         end
-        if id ~= 0 then CARRY.id = id; _carry_warm(id) end
         CARRY.nm = nm or CARRY.nm
+        CARRY.source_go = source_go or CARRY.source_go
+        CARRY.source_obj = source_obj or CARRY.source_obj
+        CARRY.equip_go = equip_go or CARRY.equip_go
+        if source_constraint ~= nil then CARRY.source_constraint = source_constraint end
+        if next(saved_context) then CARRY.context = saved_context end
+        CARRY.upper_motion = upper_motion or CARRY.upper_motion
+        CARRY.motion_id = motion_id or CARRY.motion_id
         if not CARRY.have then CARRY.adopt_at = now end
         CARRY.conjured, CARRY.lost_at, CARRY.lost_run = false, nil, nil
-        CARRY.have, CARRY.reborrowed = true, false
+        CARRY.have = true
+        if CARRY.retained ~= "equipment" then CARRY.reborrowed = false end
+        _carry_maintain_loan()
         return
     end
 
-    if not (CARRY.have and CARRY.id) then
-        if CARRY.have and M.dev then
-            _st_log("carry: hold ended but no eq id was captured (name="
-                .. tostring(CARRY.nm) .. ") - cannot keep it")
-        end
+    if not CARRY.have then
         CARRY.have = false
         return
     end
 
-    if CARRY.conjured then
-        if CARRY.go then _carry_apply_grip() end
-        return
+    if not CARRY.lost_at then
+        CARRY.lost_at = now
+        if _valid(CARRY.equip_go) and not CARRY.reborrowed then
+            CARRY.reborrowed = true
+            local restored, why = _carry_restore_native()
+            if restored then
+                CARRY.lost_at = nil
+                _st_log("carry: native hold restored immediately (L3/BACKSPACE lets go)")
+                return
+            end
+            if CARRY_OWNED_IDS[tonumber(CARRY.id)]
+                    and not _valid(CARRY.owned_go) then
+                CARRY.reborrowed = false
+                return
+            end
+        end
     end
 
-    -- only re-take the tool once the hold has been gone a beat, never on a flicker
-    if not CARRY.lost_at then CARRY.lost_at = now; return end
-    if now - CARRY.lost_at < 0.15 then return end
-
-    -- a put-down runs through an interaction, a run-drop does not
     local interacting = false
     pcall(function()
         local mgr = sdk.get_managed_singleton("app.InteractManager")
         interacting = mgr and mgr:call("isInteracting(app.Character)", _player()) == true
     end)
     if interacting then
-        if M.dev then _st_log("carry: set down through an interaction - released") end
-        CARRY.id, CARRY.have, CARRY.lost_at = nil, false, nil
+        if now - CARRY.lost_at < 1.5 then return end
+        CARRY.id, CARRY.have, CARRY.native, CARRY.lost_at = nil, false, false, nil
         return
     end
-    -- ask for the loan back first, that keeps the game's own pose and prop
+    if CARRY_OWNED_IDS[tonumber(CARRY.id)] and not _valid(CARRY.owned_go)
+            and now - CARRY.lost_at < 1.5 then
+        return
+    end
     if not CARRY.reborrowed then
         CARRY.reborrowed = true
-        if _carry_reborrow() then
+        local restored, why = _carry_restore_native()
+        if restored then
             CARRY.lost_at = nil
-            _st_log("carry: borrowed the tool back")
+            _st_log("carry: native hold restored (L3/BACKSPACE lets go)")
             return
         end
     end
-    CARRY.conjured, CARRY.at = true, now
-    _carry_spawn(CARRY.id)
-    _st_log(string.format("carry: hold died %.1fs after pickup - spawning %s (L3/BACKSPACE lets go)",
-        now - (tonumber(CARRY.adopt_at) or now), tostring(TL.eqid[CARRY.id] or CARRY.id)))
-end
-
--- builds the spawned tool and glues it to the hand, same recipe as the workpiece
-local function _carry_build()
-    if CARRY.cook then
-        local ck = CARRY.cook
-        ck.f = ck.f + 1
-        if ck.f >= 10 then
-            CARRY.go = ck.go
-            CARRY.cook = nil
-            pcall(function()
-                local pgo = _char_go(_player())
-                local ptf = pgo and pgo:call("get_Transform")
-                local btf = CARRY.go:call("get_Transform")
-                if not (ptf and btf) then return end
-                local ok = pcall(function() btf:call("setParent", ptf, true) end)
-                if not ok then pcall(function() btf:call("set_Parent", ptf) end) end
-                pcall(function() btf:call("set_ParentJoint", "R_PropA") end)
-                _carry_apply_grip()
-                -- tell the tool system it is holding this, so sweeping still works
-                local base = TL.eqid[CARRY.id]
-                local twin = base and base:lower():match("^i?t(%d+_%d+.*)$")
-                local raw = twin and ("gm" .. twin)
-                if raw then
-                    TL.carry_key = TOOLS[raw] and raw or _norm(raw)
-                end
-                _st_log("carry: tool in hand (" .. tostring(TL.carry_key or "no tool row") .. ")")
-            end)
-        end
+    local adopted, why = _carry_adopt_native()
+    if adopted then
+        CARRY.lost_at = nil
+        _st_log("carry: same scene object adopted by native ObjectCarry (L3/BACKSPACE lets go)")
         return
     end
-    if not CARRY.job then return end
-    local q = CARRY.job
-    pcall(function()
-        q.f = q.f + 1
-        if q.pfb:call("get_Ready") == true then
-            local inst
-            local pgo = _char_go(_player())
-            local p = pgo and _pos(pgo)
-            pcall(function()
-                inst = q.pfb:call("instantiate(via.vec3)",
-                    Vector3f.new(p and p.x or 0, (p and p.y or 0) + 1.0, p and p.z or 0))
-            end)
-            if not inst then
-                pcall(function()
-                    inst = q.pfb:call("instantiate", Vector3f.new(p and p.x or 0,
-                        (p and p.y or 0) + 1.0, p and p.z or 0))
-                end)
-            end
-            CARRY.job = nil
-            if inst then
-                CARRY.cook = { go = inst, f = 0 }
-                _st_log("carry: spawned " .. tostring(q.name))
-            else
-                _st_log("carry: " .. tostring(q.name) .. " would not instantiate")
-                _carry_try_next()
-            end
-        elseif q.f > 300 then
-            CARRY.job = nil
-            _st_log("carry: " .. tostring(q.name) .. " never became ready")
-            _carry_try_next()
-        end
-    end)
+
+    _st_log("carry: native preservation unavailable - " .. tostring(why))
+    if CARRY.source_hidden then _carry_source_visible(true) end
+    CARRY.detached_cleaned = true
+    _carry_release(true)
 end
 
-local BP = { at = 0 }
--- bed diagnostics
-local function _bed_probe_tick()
-    if M.dev ~= true then return end
-    local now = os.clock()
-    if now - (tonumber(BP.at) or 0) < 5.0 then return end
-    BP.at = now
-    local pgo = _char_go(_player())
-
-    local pp = pgo and _upos(pgo)
-    if not pp then return end
-    local seen = {}
-    local nrec, nio, best = 0, 0, nil
-    for _, r in pairs(unlocks) do
-
-        local rio = r.io
-        if r.kind == "bed" and not rio and r.owner then
-            pcall(function() rio = r.owner:get_field("InteractiveObject") end)
-        end
-        if r.kind == "bed" then
-            nrec = nrec + 1
-            if rio then nio = nio + 1 end
-        end
-        local rio_addr = r.io_addr or (rio and _addr(rio)) or 0
-        if r.kind == "bed" and rio and not seen[rio_addr] then
-            seen[rio_addr] = true
-            pcall(function()
-                local io = rio
-                local n = tonumber(io:call("getNumInteractPoint")) or 0
-                local near = false
-                for i = 0, n - 1 do
-                    local q = io:call("getInteractPointPosition", i)
-                    if q then
-                        local dx, dy, dz = q.x - pp.x, q.y - pp.y, q.z - pp.z
-                        local d2 = dx * dx + dy * dy + dz * dz
-                        if not best or d2 < best then best = d2 end
-                        if d2 < 16.0 then near = true break end
-                    end
-                end
-                if not near then return end
-                BP.hit = true
-                local works = io:get_field("Works")
-                for i = 0, n - 1 do
-                    local w = works and works:call("get_Item", i)
-                    if w then
-                        local en, ia, cp, da = "?", "?", "?", nil
-                        pcall(function() en = tostring(w:get_field("_IsInteractEnable")) end)
-                        pcall(function() ia = tostring(w:get_field("_IsInteracted")) end)
-                        pcall(function() cp = tostring(w:get_field("_canPlayerInteract")) end)
-                        pcall(function() da = _addr(w:get_field("_Data")) end)
-                        local icon = "?"
-                        pcall(function() icon = tostring(io:call("hasIcon", i)) end)
-                        _st_log(string.format(
-                            "BEDPROBE %s[%d] enable=%s interacted=%s canPlayer=%s hasIcon=%s patched=%s",
-                            tostring(r.host), i, en, ia, cp, icon,
-                            tostring(da ~= nil and da == _addr(r.point))))
-                    end
-                end
-                pcall(function()
-                    local mgr = sdk.get_managed_singleton("app.InteractManager")
-                    if mgr then
-                        _st_log("BEDPROBE manager hasHighest="
-                            .. tostring(mgr:call("hasHighestPriorityObjectForPlayer")))
-                    end
-                end)
-            end)
-        end
-    end
-
-    if not BP.hit then
-        if now - (tonumber(BP.idle_at) or 0) > 15.0 then
-            BP.idle_at = now
-            if nrec == 0 then
-                _st_log("BEDPROBE: zero bed unlock records exist right now")
-            else
-                _st_log(string.format("BEDPROBE idle: %d bed records (%d with io), nearest point %s",
-                    nrec, nio, best and string.format("%.1fm", math.sqrt(best)) or "unknown"))
-            end
-
-            pcall(function()
-                local mgr = sdk.get_managed_singleton("app.InteractManager")
-                local ups = mgr and mgr:get_field("InteractiveObjectUpdaters")
-                if not ups then _st_log("ENGINESCAN: no updaters array") return end
-                local found = 0
-                local nu = tonumber(ups:call("get_Length")) or 0
-                for u = 0, nu - 1 do
-                    local lst = nil
-                    pcall(function()
-                        local upd = ups:get_element(u)
-                        lst = upd and upd:get_field("InteractiveObjectList")
-                    end)
-                    local n = lst and tonumber(lst:call("get_Count")) or 0
-                    for i = 0, n - 1 do
-                        pcall(function()
-                            local io = lst:call("get_Item", i)
-                            if not io then return end
-                            local np = tonumber(io:call("getNumInteractPoint")) or 0
-                            local bd, bi = nil, nil
-                            for p = 0, np - 1 do
-                                local q = io:call("getInteractPointPosition", p)
-                                if q then
-                                    local dx, dy, dz = q.x - pp.x, q.y - pp.y, q.z - pp.z
-                                    local d2 = dx * dx + dy * dy + dz * dz
-                                    if not bd or d2 < bd then bd, bi = d2, p end
-                                end
-                            end
-                            if bd and bd < 36.0 then
-                                found = found + 1
-                                local nm = "?"
-                                pcall(function()
-                                    local og = io:call("get_Owner")
-                                    nm = tostring(og:call("get_Name"))
-                                end)
-                                local ct, icon = "?", "?"
-                                pcall(function() ct = tostring(io:call("getTargetCharacterType", bi)) end)
-                                pcall(function() icon = tostring(io:call("hasIcon", bi)) end)
-                                _st_log(string.format("ENGINESCAN %.1fm %s pts=%d ct[%d]=%s icon=%s",
-                                    math.sqrt(bd), nm, np, bi, ct, icon))
-
-                            end
-                        end)
-                    end
-                end
-                _st_log("ENGINESCAN done: " .. found .. " registered interactables within 6m")
-            end)
-        end
-    end
-    BP.hit = nil
-end
-
--- cooking list and messages
 local MEATS = {
     { id = 25,  buff = 3, name = "Scrag of Beast",
       toast = "You cooked a Scrag of Beast - a hearty meal! Party Strength, Defense & Stamina up." },
@@ -2370,8 +3057,6 @@ local MEATS = {
 local TOAST = { txt = nil, at = 0 }
 local function _mc_toast(s) TOAST.txt, TOAST.at = s, os.clock() end
 
--- ⛔ no d2d here. It registers a draw callback at load, which stays live even when
--- the mod is switched off, and it is a suspect in the camp cooking crash.
 local function _mc_toast_draw()
     if not TOAST.txt then return end
     local age = os.clock() - TOAST.at
@@ -2390,12 +3075,9 @@ local function _mc_toast_draw()
     end)
 end
 
--- town cauldrons only, camps keep the game's own cooking
 local MC_POTS = {
     gm80_256 = true, gm51_381 = true, gm51_382 = true, gm51_383 = true,
 }
--- These are the native camp stew sequence. Never prompt, open a dialog or consume
--- its input near them: the game is already handling the same Interact press.
 local MC_NATIVE_CAMP = {
     gm80_060 = true, gm80_061 = true, gm80_062 = true,
     gm80_063 = true, gm80_064 = true,
@@ -2409,7 +3091,6 @@ local function _mc_party()
     local ch = _player()
     if ch then out[#out + 1] = ch end
     local seen = { [_addr(ch) or 0] = true }
-    -- the party list and the world list answer to different getters, so try both
     for _, getter in ipairs({ "get_PartyPawnList", "get_PawnCharacterList" }) do
         local lst
         pcall(function()
@@ -2419,7 +3100,6 @@ local function _mc_party()
         local n = 0
         pcall(function() n = tonumber(lst:call("get_Count")) or 0 end)
         for i = 0, n - 1 do
-            -- one pcall per pawn, a bad entry must not end the whole sweep
             pcall(function()
                 local pawn
                 pcall(function() pawn = lst[i] end)
@@ -2469,7 +3149,6 @@ local function _mc_pick()
     return p
 end
 
--- never draw a dialog whose gui has not finished loading, that is a hard crash
 local function _gui_dialog_ready()
     local ready, dialog = false, nil
     pcall(function()
@@ -2558,6 +3237,22 @@ local function _mc_stop_stir()
     end)
 end
 
+function MC.clear_prompt()
+    pcall(function()
+        local IP = _G.IrisPrompt
+        if IP and type(IP.clear) == "function" then IP.clear("interactables_cook") end
+    end)
+end
+
+function MC.suppress_for_native_camp()
+    MC.near, MC.near_key, MC.near_pos = nil, nil, nil
+    MC.want = nil
+    if MC.open then _mc_close() end
+    if MC.stir_until then _mc_stop_stir() end
+    MC.clear_prompt()
+    MC.prev = _interact_down()
+end
+
 local function _mc_cook(entry)
     local ok = false
     pcall(function()
@@ -2596,9 +3291,20 @@ local function _mc_cook(entry)
     end)
 end
 
--- cook prompt and menu
 local function _mc_frame()
-    if M.stations == false then return end
+    if CAMP_STATE.is_active() then
+        if MC.camp_suppressed ~= true then
+            MC.camp_suppressed = true
+            _st_log("cook: synthetic interactions suppressed while Capcom camp is active")
+        end
+        MC.suppress_for_native_camp()
+        return
+    elseif MC.camp_suppressed == true then
+        MC.camp_suppressed = false
+        _st_log("cook: native camp ended; town cooking interactions available again")
+    end
+    if not ST.group_on("food") then MC.clear_prompt(); return end
+    if rawget(_G, "InteractablesRestDialogActive") == true then return end
     local now = os.clock()
 
     if MC.stir_until and (now >= MC.stir_until or _tl_move_mag() > 0.3) then
@@ -2621,7 +3327,6 @@ local function _mc_frame()
         return
     end
 
-    -- the gui was still loading when the menu was asked for, try again for a moment
     if MC.want and not MC.open then
         local w = MC.want
         if now - (tonumber(w.at) or 0) > 3.0 then
@@ -2653,10 +3358,7 @@ local function _mc_frame()
     MC.prev = down
     if now - (tonumber(MC.closed_at) or 0) < 0.4 then return end
     if not near or MC.stir_until then
-        pcall(function()
-            local IP = _G.IrisPrompt
-            if IP and type(IP.clear) == "function" then IP.clear("interactables_cook") end
-        end)
+        MC.clear_prompt()
         return
     end
     pcall(function()
@@ -2675,12 +3377,10 @@ local function _mc_frame()
     end
 end
 
--- holds a spawned workpiece against the free hand while smithing
 local PIN = { pfb = nil, job = nil, go = nil, id = nil }
 
 local function _pin_despawn()
     if _valid(PIN.go) then
-        -- detach from the hand before destroying
         pcall(function()
             local btf = PIN.go:call("get_Transform")
             btf:call("set_ParentJoint", "")
@@ -2693,10 +3393,10 @@ local function _pin_despawn()
         pcall(function() PIN.cook.go:call("destroy", PIN.cook.go) end)
     end
     PIN.go, PIN.job, PIN.id, PIN.jname, PIN.cook, PIN.donor = nil, nil, nil, nil, nil, nil
+    PIN.grip = nil
     PIN.bmc, PIN.rebind = nil, nil
 end
 
--- finds the mesh component on a prop or its children
 local function _pin_find_mesh(go, depth)
     if not go or (depth or 0) > 4 then return nil end
     local mc
@@ -2717,17 +3417,26 @@ local function _pin_find_mesh(go, depth)
     return found
 end
 
--- applies the grip offset and rotation sliders to the held workpiece
 local function _pin_apply_local()
     if not (PIN.go and PIN.jname) then return end
+    if not _valid(PIN.go) then
+        PIN.go, PIN.id, PIN.jname, PIN.grip = nil, nil, nil, nil
+        return
+    end
     pcall(function()
+        local g = PIN.grip
+        local ox = g and g.ox or M.pin_ox or 0
+        local oy = g and g.oy or M.pin_oy or 0
+        local oz = g and g.oz or M.pin_oz or 0
+        local rx = g and g.rx or M.pin_rx or 0
+        local ry = g and g.ry or M.pin_ry or 0
+        local rz = g and g.rz or M.pin_rz or 0
         local btf = PIN.go:call("get_Transform")
-        btf:call("set_LocalPosition",
-            Vector3f.new(M.pin_ox or 0, M.pin_oy or 0, M.pin_oz or 0))
+        btf:call("set_LocalPosition", Vector3f.new(ox, oy, oz))
         local d = math.pi / 360
-        local cx, sx = math.cos((M.pin_rx or 0) * d), math.sin((M.pin_rx or 0) * d)
-        local cy, sy = math.cos((M.pin_ry or 0) * d), math.sin((M.pin_ry or 0) * d)
-        local cz, sz = math.cos((M.pin_rz or 0) * d), math.sin((M.pin_rz or 0) * d)
+        local cx, sx = math.cos(rx * d), math.sin(rx * d)
+        local cy, sy = math.cos(ry * d), math.sin(ry * d)
+        local cz, sz = math.cos(rz * d), math.sin(rz * d)
         local q = ValueType.new(sdk.find_type_definition("via.Quaternion"))
         q.w = cy * cx * cz + sy * sx * sz
         q.x = cy * sx * cz + sy * cx * sz
@@ -2737,12 +3446,11 @@ local function _pin_apply_local()
     end)
 end
 
-local function _pin_spawn(id)
+local function _pin_spawn(id, grip)
     if PIN.go or PIN.job then return end
     local pgo = _char_go(_player())
     local p = pgo and _pos(pgo)
     if not p then return end
-    -- props only accept placement at spawn, so lay the workpiece on the anvil in front
     local fx, fz = 0, 1
     pcall(function()
         local az = pgo:call("get_Transform"):call("get_AxisZ")
@@ -2760,33 +3468,37 @@ local function _pin_spawn(id)
     if not (ok and pfb) then return end
     PIN.job = { pfb = pfb, f = 0, x = p.x, y = p.y + 1.0, z = p.z }
     PIN.id = id
+    PIN.grip = grip
 end
 
--- follows the current work session, spawning and pinning the prop to the hand
 local function _pin_frame()
     local key = ST.session and ST.session.key
     local row = key and STATIONS[key]
-    local want = row and row.pin and tostring(M.anvil_prop or "") ~= ""
+    local prop, grip = nil, nil
+    if row and row.prop then
+        prop = tostring(row.prop)
+        grip = row.grip or { ox = 0, oy = 0, oz = 0, rx = 0, ry = 0, rz = 0 }
+    elseif row and row.pin and tostring(M.anvil_prop or "") ~= "" then
+        prop = tostring(M.anvil_prop)
+    end
+    local want = prop ~= nil and prop ~= ""
+    if want and PIN.id and PIN.id ~= prop then _pin_despawn() end
     if want and not PIN.go and not PIN.job and not PIN.cook then
-        _pin_spawn(tostring(M.anvil_prop))
+        _pin_spawn(prop, grip)
     elseif not want and (PIN.go or PIN.job or PIN.cook) then
         _pin_despawn()
     end
     _pin_apply_local()
 end
 
-local CK = { req = false, open = false }
 re.on_application_entry("UpdateBehavior", function()
     if M.master == false then return end
-    pcall(_carry_build)
-    -- give the freshly spawned prop a few frames to finish building, then use it directly
     if PIN.cook then
         local ck2 = PIN.cook
         ck2.f = ck2.f + 1
         if ck2.f >= 10 then
             PIN.go = ck2.go
             PIN.cook = nil
-            -- glue the prop to the hand bone, the engine then carries it with zero lag
             pcall(function()
                 local pgo = _char_go(_player())
                 local ptf = pgo and pgo:call("get_Transform")
@@ -2802,19 +3514,18 @@ re.on_application_entry("UpdateBehavior", function()
                     pcall(function() btf:call("set_ParentJoint", jname) end)
                     PIN.jname = jname
                     _pin_apply_local()
+                    pcall(function() PIN.go:call("set_DrawSelf", true) end)
                     _st_log("PIN: workpiece parented to " .. jname)
                 end
             end)
         end
     end
-    -- workpiece prefab loader
     if PIN.job then
         local q = PIN.job
         pcall(function()
             q.f = q.f + 1
             if q.pfb:call("get_Ready") == true then
                 local inst
-                -- try to lay it flat with the rotation overload, upright otherwise
                 pcall(function()
                     local rq = ValueType.new(sdk.find_type_definition("via.Quaternion"))
                     rq.x, rq.y, rq.z, rq.w = 0.7071, 0, 0, 0.7071
@@ -2832,7 +3543,7 @@ re.on_application_entry("UpdateBehavior", function()
                     end)
                 end
                 if inst then
-                    -- the prop's insides build over the next frames, steal after a wait
+                    pcall(function() inst:call("set_DrawSelf", false) end)
                     PIN.cook = { go = inst, f = 0 }
                 end
                 PIN.job = nil
@@ -2841,81 +3552,121 @@ re.on_application_entry("UpdateBehavior", function()
             end
         end)
     end
-    if CK.inst_req then
-        CK.inst_req = false
-
-        _st_log("COOKPROBE: town route disabled - requestInstantiate is crash-proven; "
-            .. "waiting on the requestLoadScene decode")
-    elseif CK.inst_wait then
-        pcall(function()
-            local gm = sdk.get_managed_singleton("app.GuiManager")
-            if gm and gm:call("IsLoadGuiType", 45) then
-                CK.inst_wait = false
-                _st_log("COOKPROBE: cook GUI registered - opening the native menu")
-                CK.req = true
-            elseif os.clock() - (tonumber(CK.inst_at) or 0) > 6.0 then
-                CK.inst_wait = false
-                _st_log("COOKPROBE: instantiate never registered (6s) - parent/folder needs decoding")
-            end
-        end)
-    elseif CK.req then
-        CK.req = false
-        pcall(function()
-            local gm = sdk.get_managed_singleton("app.GuiManager")
-            local cm = sdk.get_managed_singleton("app.CampManager")
-            local dm = sdk.get_managed_singleton("app.DemoMediator")
-            if not gm then _st_log("COOKPROBE: no GuiManager") return end
-            local loaded, prefab, buffdef, allowed = "?", "?", "?", "?"
-            pcall(function() loaded = tostring(gm:call("IsLoadGuiType", 45)) end)
-            pcall(function() prefab = tostring(gm:call("getPrefab", 45) ~= nil) end)
-            pcall(function() buffdef = tostring(cm ~= nil
-                and cm:get_field("CampBuffDefineUserData") ~= nil) end)
-            pcall(function() allowed = tostring(dm and dm:call("get_IsRequestAllowed")) end)
-            _st_log(string.format(
-                "COOKPROBE preflight: gui45loaded=%s prefab=%s buffdef=%s demoAllowed=%s",
-                loaded, prefab, buffdef, allowed))
-
-            pcall(function()
-                local ic = gm:get_field("InstCtrl")
-                local cl = ic and ic:get_field("CtrlList")
-                local il = ic and ic:get_field("InstList")
-                _st_log(string.format("COOKPROBE instctrl: ctrls=%s pending=%s",
-                    tostring(cl and cl:call("get_Count")), tostring(il and il:call("get_Count"))))
-            end)
-            if buffdef ~= "true" then
-                _st_log("COOKPROBE refused: CampBuffDefineUserData nil - opening would AV")
-                return
-            end
-
-            if loaded ~= "true" then
-                _st_log("COOKPROBE refused: GuiType 45 not loaded here (camp-only so far) - "
-                    .. "opening would crash. Needs the setLoadGuiType route decoded first.")
-                return
-            end
-            gm:call("requestCampMeatSelect")
-            CK.open = true
-            _st_log("COOKPROBE: native meat-select requested - choose or cancel; nothing is consumed")
-        end)
-    elseif CK.open then
-        pcall(function()
-            local gm = sdk.get_managed_singleton("app.GuiManager")
-            if gm and gm:call("isEndMenuUI") then
-                CK.open = false
-                local r = nil
-                pcall(function() r = tonumber(gm:call("get_MenuUIResult")) end)
-                _st_log("COOKPROBE result: " .. tostring(r)
-                    .. " (-1 = cancelled; 25-30/41/114 = chosen meat ItemID - not consumed)")
-            end
-        end)
-    end
 end)
 
-local BF = { at = 0, log = {} }
--- finds beds and cookpots near you
+local BF = { at = 0, u = 0, i = 0, cycle = 0, bed_probe = {}, cls = {} }
+
+local function _registry_bed_owner(io, owner_go, now)
+    local ia = _addr(io)
+    local cached = ia and BF.bed_probe[ia]
+    if cached and now < (tonumber(cached.until_at) or 0) then
+        if cached.is_bed ~= true then return nil end
+        if _managed(cached.owner) then return cached.owner end
+    end
+    if not owner_go then
+        pcall(function() owner_go = io:call("get_Owner") end)
+    end
+    local bed = _bed_owner(owner_go)
+    if ia then
+        BF.bed_probe[ia] = {
+            is_bed = _managed(bed),
+            owner = _managed(bed) and bed or nil,
+            until_at = now + 120.0,
+        }
+    end
+    return bed
+end
+
+local function _registry_process(io, now, pp)
+    if not io then return end
+    local ia = _addr(io)
+    local cls = ia and BF.cls[ia]
+    if not (cls and now < (tonumber(cls.until_at) or 0)) then
+        local nm, owner_go
+        pcall(function()
+            owner_go = io:call("get_Owner")
+            if not owner_go then owner_go = io:get_field("<Owner>k__BackingField") end
+            nm = owner_go and tostring(owner_go:call("get_Name")) or nil
+        end)
+        if not nm then
+            if ia then BF.cls[ia] = { dead = true, until_at = now + 120.0 } end
+            return
+        end
+        local low = nm:lower()
+        local base = low:match("^(gm%d+_%d+)") or low
+        cls = {
+            nm = nm, low = low, base = base,
+            key = _norm(low) or _norm(base) or base,
+            sk = ST.seat_key_from_owner(owner_go),
+            until_at = now + 120.0,
+        }
+        if ia then BF.cls[ia] = cls end
+    end
+    if cls.dead then return end
+    local nm, low, base, key = cls.nm, cls.low, cls.base, cls.key
+    local named_bed = BED_KEYS[low] or BED_KEYS[base]
+    local bed_owner = nil
+    if M.native_beds ~= false
+            and (not named_bed or not (M.st_off or {})[BED_KEYS[low] and low or base]) then
+        bed_owner = _registry_bed_owner(io, nil, now)
+    end
+    local isbed = M.native_beds ~= false
+        and ((named_bed and not (M.st_off or {})[BED_KEYS[low] and low or base])
+            or _managed(bed_owner))
+    local seat_key = M.enabled ~= false and cls.sk or nil
+    local isseat = M.enabled ~= false and (SIT_KEYS[low] or SIT_KEYS[base] or seat_key ~= nil)
+    local ispot = not CAMP_STATE.is_active() and MC_POTS[base] == true
+
+    local np = tonumber(io:call("getNumInteractPoint")) or 0
+    local bd, bq = nil, nil
+    for p = 0, np - 1 do
+        local q = io:call("getInteractPointPosition", p)
+        if q then
+            local dx, dy, dz = q.x - pp.x, q.y - pp.y, q.z - pp.z
+            local d2 = dx * dx + dy * dy + dz * dz
+            if not bd or d2 < bd then bd, bq = d2, q end
+        end
+    end
+    if not bd then return end
+    if not isseat and M.enabled ~= false and bd < 100.0 then
+        seat_key = ST.seat_key_near(bq)
+        isseat = seat_key ~= nil
+    end
+    local kind = isbed and "bed" or (isseat and "seat" or _unlock_kind(key))
+    if not (kind or ispot) then return end
+    if ispot and bd < 5.29 then
+        MC.near = now
+        MC.near_pos = { x = bq.x, y = bq.y, z = bq.z }
+        if MC.near_key ~= base then
+            MC.near_key = base
+            _st_log("cook pot in range: " .. tostring(base))
+        end
+    end
+    if kind and bd < 100.0 then
+        local dl = io:get_field("DataList")
+        local ndl = dl and tonumber(dl:call("get_Count")) or 0
+        local prop_key = isbed and (BED_KEYS[low] and low or (BED_KEYS[base] and base or key))
+            or (isseat and (seat_key or (SIT_KEYS[low] and low or base)) or key)
+        for d = 0, ndl - 1 do
+            local pt = dl:call("get_Item", d)
+            if pt then
+                local okp = _patch_search_point(pt, kind, nm,
+                    "registry", d, io, bed_owner, prop_key)
+                if okp then
+                    _st_log("registry unlocked " .. kind .. " "
+                        .. tostring(prop_key) .. "[" .. d .. "]")
+                end
+            end
+        end
+    end
+end
+
 local function _registry_tick()
-    if M.stations == false and M.native_beds == false then return end
+    if not ST.any_activity_enabled() and M.native_beds == false
+            and M.native_chores == false and M.enabled == false
+            and M.native_ambient ~= true then return end
     local now = os.clock()
-    if now - (tonumber(BF.at) or 0) < 2.5 then return end
+    if now - (tonumber(BF.at) or 0) < (tonumber(M.registry_slice_secs) or 0.05) then return end
     BF.at = now
     local pgo = _char_go(_player())
     local pp = pgo and _upos(pgo)
@@ -2925,74 +3676,40 @@ local function _registry_tick()
         local ups = mgr and mgr:get_field("InteractiveObjectUpdaters")
         if not ups then return end
         local nu = tonumber(ups:call("get_Length")) or 0
-        for u = 0, nu - 1 do
+        if nu <= 0 then BF.u, BF.i = 0, 0; return end
+
+        local budget = math.max(8, math.floor(tonumber(M.registry_budget) or 24))
+        local processed, hops = 0, 0
+        while processed < budget and hops < budget + nu + 2 do
+            hops = hops + 1
+            if BF.u >= nu then
+                BF.u, BF.i = 0, 0
+                BF.cycle = (BF.cycle or 0) + 1
+                break
+            end
             local lst
             pcall(function()
-                local upd = ups:get_element(u)
+                local upd = ups:get_element(BF.u)
                 lst = upd and upd:get_field("InteractiveObjectList")
             end)
             local n = lst and tonumber(lst:call("get_Count")) or 0
-            for i = 0, n - 1 do
-                pcall(function()
-                    local io = lst:call("get_Item", i)
-                    if not io then return end
-                    local nm
-                    pcall(function() nm = tostring(io:call("get_Owner"):call("get_Name")) end)
-                    if not nm then return end
-                    local low = nm:lower()
-                    local base = low:match("^(gm%d+_%d+)") or low
-                    local isbed = M.native_beds ~= false
-                        and (BED_KEYS[low] or BED_KEYS[base])
-                        and not (M.st_off or {})[BED_KEYS[low] and low or base]
-                    local isseat = M.enabled ~= false
-                        and (SIT_KEYS[low] or SIT_KEYS[base])
-                    local ispot = MC_POTS[base] == true
-                    if not (isbed or isseat or ispot) then return end
-                    local np = tonumber(io:call("getNumInteractPoint")) or 0
-                    local bd, bq = nil, nil
-                    for p = 0, np - 1 do
-                        local q = io:call("getInteractPointPosition", p)
-                        if q then
-                            local dx, dy, dz = q.x - pp.x, q.y - pp.y, q.z - pp.z
-                            local d2 = dx * dx + dy * dy + dz * dz
-                            if not bd or d2 < bd then bd, bq = d2, q end
-                        end
-                    end
-                    if not bd then return end
-                    if ispot and bd < 5.29 then
-                        MC.near = now
-                        MC.near_pos = { x = bq.x, y = bq.y, z = bq.z }
-                        if MC.near_key ~= base then
-                            MC.near_key = base
-                            _st_log("cook pot in range: " .. tostring(base))
-                        end
-                    end
-                    if (isbed or isseat) and bd < 100.0 then
-                        local kind = isbed and "bed" or "seat"
-                        local key = isbed and (BED_KEYS[low] and low or base)
-                            or (SIT_KEYS[low] and low or base)
-                        local dl = io:get_field("DataList")
-                        local ndl = dl and tonumber(dl:call("get_Count")) or 0
-                        for d = 0, ndl - 1 do
-                            local pt = dl:call("get_Item", d)
-                            if pt then
-                                local okp = _patch_search_point(pt, kind, nm,
-                                    "bedfeed", d, io, nil, key)
-                                if okp then
-                                    _st_log("BEDFEED unlocked " .. kind .. " " .. key .. "[" .. d .. "]")
-                                end
-                            end
-                        end
-                    end
-                end)
+            if BF.i >= n then
+                BF.u, BF.i = BF.u + 1, 0
+            else
+                local i = BF.i
+                BF.i = BF.i + 1
+                processed = processed + 1
+                local io = nil
+                pcall(function() io = lst:call("get_Item", i) end)
+                pcall(_registry_process, io, now, pp)
             end
         end
     end)
 end
 
--- close up working camera
 local function _st_cam_tick()
-    local want = M.st_cam ~= false and M.stations ~= false
+    if M.st_cam == false and ST.cam_base == nil then return end
+    local want = M.st_cam ~= false
         and (ST.session ~= nil or ST.pending ~= nil or (TL and TL.act ~= nil))
     local cm = sdk.get_managed_singleton("app.CameraManager")
     if not cm then return end
@@ -3031,40 +3748,183 @@ local function _st_cam_tick()
     end
 end
 
--- the rest choice, offered once she is properly lying down
-local BR = { open = false }
+local BR = {
+    open = false,
+    home_override = rawget(_G, "InteractablesHomeBedOverrideV2"),
+    transition = rawget(_G, "InteractablesNativeBedRestV3"),
+    wake_guard = rawget(_G, "InteractablesBedWakeGuardV1"),
+}
+_G.Interactables_rest_transition = BR.transition ~= nil
 
-local function _br_close()
-    pcall(function()
-        local gm = sdk.get_managed_singleton("app.GuiManager")
-        local dlg = gm and gm:get_field("Dialog")
-        if dlg then dlg:call("reqClose") end
-        if gm then gm:call("requestHideGuiType", 14) end
-    end)
-    BR.open = false
-    BR.want = nil
-end
+_G.InteractablesBedAuthoredGetUpV1 = nil
+_G.InteractablesBedAuthoredGetUpConsumedV1 = nil
 
-local function _br_show(io)
-    local ready, dialog = _gui_dialog_ready()
-    if not ready then
-        BR.want = BR.want or { io = io, at = os.clock() }
+local function _br_progress_draw()
+    local until_at = tonumber(BR.wake_mask_until)
+    if not until_at then return end
+    local now = os.clock()
+    if now >= until_at then
+        BR.wake_mask_until = nil
+        BR.wake_mask_fade_at = nil
         return
     end
-    BR.want = nil
-    local ok = pcall(function()
-        dialog:call("reqDisp", "Rest until...", "Morning", "Nightfall", "Just lie here", "",
-            true, 0, true, 58, 0, -1, nil,
-            false, false, false, false, false, false, true, 0.0)
-        BR.open, BR.at, BR.baseline, BR.io = true, os.clock(), _mc_pick(), io
+    pcall(function()
+        local sz = imgui.get_display_size()
+        local w = sz and tonumber(sz.x) or 1920.0
+        local h = sz and tonumber(sz.y) or 1080.0
+        local alpha = 255
+        local fade_at = tonumber(BR.wake_mask_fade_at)
+        if fade_at and until_at > fade_at then
+            alpha = math.max(0, math.min(255,
+                math.floor(255.0 * (until_at - now) / (until_at - fade_at))))
+        end
+        draw.filled_rect(0.0, 0.0, w, h, (alpha << 24))
     end)
-    if not ok then _st_log("bed rest dialog FAILED") end
 end
 
--- borrow a real inn bed's settings, and learn which space its coordinates speak.
--- guessing that wrong is how you wake up in the sea.
+local function _br_native_state(bed)
+    local row = {}
+    for _, field in ipairs({ "Group", "Order", "GroupMyRooml", "OrderMyRoom",
+            "IsUseMyRoom", "NowMyRoomState", "TmpInteractSheetNum", "IsAwakeMorning" }) do
+        pcall(function()
+            local v = bed:get_field(field)
+            local raw = nil
+            pcall(function() raw = v and v:get_field("value__") end)
+            row[field] = tostring(raw ~= nil and raw or v)
+        end)
+    end
+    return row
+end
+
+_G.InteractablesHomeBedSheetOnStartV2 = function(bed, interact_no, character)
+    if M.master == false or M.native_beds == false or M.bed_rest == false then return end
+    if BR.native_calling or not _managed(bed) or not _managed(character) then return end
+    local pa, ca = _addr(_player()), _addr(character)
+    if not (pa and ca and pa == ca) then return end
+
+    local inn = nil
+    pcall(function() inn = bed:get_field("InnParam") end)
+    if not _managed(inn) then return end
+
+    local now, ba = os.clock(), _addr(bed)
+    if BR.native_last_addr == ba
+            and now - (tonumber(BR.native_last_at) or 0) < 0.75 then return end
+    BR.native_last_addr, BR.native_last_at = ba, now
+
+    local trace = {
+        at = now, bed = tostring(ba), interact_no = tostring(interact_no),
+        before = _br_native_state(bed),
+    }
+    _G.InteractablesHomeBedTrace = trace
+
+    local is_home = false
+    pcall(function() is_home = bed:get_field("IsUseMyRoom") == true end)
+    if not is_home then
+        trace.route = "native non-home Gm51_115"
+        return
+    end
+
+    local switched, err = pcall(function() bed:set_field("IsUseMyRoom", false) end)
+    trace.route = "ordinary sheet branch"
+    trace.after_switch = _br_native_state(bed)
+    trace.call_ok, trace.call_error = tostring(switched), tostring(err)
+    if switched then
+        BR.home_override = { bed = bed, value = true, at = now, saw_open = false }
+        _G.InteractablesHomeBedOverrideV2 = BR.home_override
+        BR.home_stage_addr, BR.home_stage_at = ba, now
+        _G.Interactables_bed_active = true
+        _st_log("home bed: ordinary native lie-down staged; home flag held until authored exit")
+    else
+        _st_log("home bed: FAILED to stage native lie-down: " .. tostring(err))
+    end
+end
+
+if not _G.InteractablesHomeBedSheetHooksV2 then
+    _G.InteractablesHomeBedSheetHooksV2 = true
+    pcall(function()
+        local td = sdk.find_type_definition("app.Gm51_115")
+        local mm = td and td:get_method(
+            "onStartInteractBase(System.UInt32, app.Character)")
+        if not mm then error("Gm51_115.onStartInteractBase was not found") end
+        sdk.hook(mm, function(args)
+            pcall(function()
+                local f = rawget(_G, "InteractablesHomeBedSheetOnStartV2")
+                if type(f) == "function" then
+                    f(sdk.to_managed_object(args[2]), sdk.to_int64(args[3]),
+                      sdk.to_managed_object(args[4]))
+                end
+            end)
+            return sdk.PreHookResult.CALL_ORIGINAL
+        end, function(retval) return retval end)
+        _st_log("home bed: pre-rest sheet hook installed")
+    end)
+end
+
+local function _br_clear_rest_prompt()
+    pcall(function()
+        local IP = _G.IrisPrompt
+        if IP and type(IP.clear_slot) == "function" then
+            IP.clear_slot("interactables_bed_rest", "PNL_R02")
+            IP.clear_slot("interactables_bed_exit", "PNL_R03")
+        end
+    end)
+end
+
+local function _br_dialog_close()
+    pcall(function()
+        local gm = sdk.get_managed_singleton("app.GuiManager")
+        local dialog = gm and gm:get_field("Dialog")
+        if dialog then dialog:call("reqClose") end
+        if gm then gm:call("requestHideGuiType", 14) end
+    end)
+    _G.InteractablesRestDialogActive = nil
+end
+
+local function _br_dialog_show(transition)
+    local ready, dialog = _gui_dialog_ready()
+    if not ready or not dialog then return false end
+    local shown = false
+    pcall(function()
+        dialog:call("reqDisp", "Rest until when?", "Morning", "Nightfall", "Cancel", "",
+            true, 0, true, 58, 0, -1, nil,
+            false, false, false, false, false, false, true, 0.0)
+        transition.dialog_baseline = _mc_pick()
+        transition.dialog_opened_at = os.clock()
+        shown = true
+    end)
+    if shown then _G.InteractablesRestDialogActive = true end
+    return shown
+end
+
+local function _br_dialog_choice(transition, now)
+    if not transition or not transition.dialog_opened_at
+            or now - transition.dialog_opened_at < 0.3 then return nil end
+    local picked = _mc_pick()
+    if picked == nil or picked == 0 or picked == transition.dialog_baseline then return nil end
+    picked = tonumber(picked)
+    if picked == 1 then return true end
+    if picked == 2 then return false end
+    if picked == 3 or picked == 5 then return "cancel" end
+    return nil
+end
+
+local function _br_set_rest_prompt(a_text, b_text)
+    pcall(function()
+        local IP = _G.IrisPrompt
+        if not (IP and type(IP.set_slot) == "function") then return end
+        if a_text ~= nil then
+            IP.set_slot("interactables_bed_exit", "PNL_R03", a_text, 101)
+        end
+        if b_text ~= nil then
+            IP.set_slot("interactables_bed_rest", "PNL_R02", b_text, 100)
+        elseif type(IP.clear_slot) == "function" then
+            IP.clear_slot("interactables_bed_rest", "PNL_R02")
+        end
+    end)
+end
+
 local function _br_donor_param()
-    local found, space
+    local found, space, fallback
     pcall(function()
         local sm = sdk.get_native_singleton("via.SceneManager")
         local smt = sdk.find_type_definition("via.SceneManager")
@@ -3077,6 +3937,7 @@ local function _br_donor_param()
             pcall(function()
                 local bed = comps:call("get_Item", i)
                 local ip = bed and bed:get_field("InnParam")
+                if _managed(ip) and not fallback then fallback = ip end
                 local slot = ip and ip:get_field("Player")
                 local p = slot and slot:get_field("_Pos")
                 if not (p and p.x) then return end
@@ -3086,18 +3947,31 @@ local function _br_donor_param()
                 if not (u and r) then return end
                 local du = math.sqrt((p.x - u.x) ^ 2 + (p.z - u.z) ^ 2)
                 local dr = math.sqrt((p.x - r.x) ^ 2 + (p.z - r.z) ^ 2)
-                -- the authored wake spot sits beside its own bed, so the nearer space wins
                 if du < 30.0 and du <= dr then found, space = ip, "universal"
                 elseif dr < 30.0 and dr < du then found, space = ip, "render" end
             end)
         end
     end)
+    if not found and _managed(fallback) then
+        found, space = fallback, "universal"
+        _st_log("bed rest: using streamed inn settings as clone template")
+    end
     if found then _st_log("bed rest: borrowed inn settings, coords are " .. tostring(space)) end
     return found, space
 end
 
--- point the five wake spots at this bed, so she wakes where she slept
-local function _br_aim_param(param, io, space)
+local function _br_atan2(y, x)
+    if x > 0 then return math.atan(y / x) end
+    if x < 0 then
+        if y >= 0 then return math.atan(y / x) + math.pi end
+        return math.atan(y / x) - math.pi
+    end
+    if y > 0 then return math.pi * 0.5 end
+    if y < 0 then return math.pi * -0.5 end
+    return 0.0
+end
+
+local function _br_aim_param(param, io, space, reverse_player)
     local ok = false
     pcall(function()
         local go = io and io:call("get_Owner")
@@ -3109,139 +3983,814 @@ local function _br_aim_param(param, io, space)
         if not p then return end
         local yaw = 0.0
         pcall(function()
-            yaw = math.atan2(2.0 * (rot.w * rot.y + rot.x * rot.z),
+            yaw = _br_atan2(2.0 * (rot.w * rot.y + rot.x * rot.z),
                 1.0 - 2.0 * (rot.y * rot.y + rot.x * rot.x))
         end)
         local fx, fz = math.sin(yaw), math.cos(yaw)
         local rx, rz = math.cos(yaw), -math.sin(yaw)
         local q = ValueType.new(sdk.find_type_definition("via.Quaternion"))
         q.x, q.y, q.z, q.w = 0, math.sin(yaw * 0.5), 0, math.cos(yaw * 0.5)
-        local function stamp(field, px, py, pz)
+        local player_q = q
+        if reverse_player == true then
+            local player_yaw = yaw + math.pi
+            player_q = ValueType.new(sdk.find_type_definition("via.Quaternion"))
+            player_q.x, player_q.y, player_q.z, player_q.w = 0,
+                math.sin(player_yaw * 0.5), 0, math.cos(player_yaw * 0.5)
+        end
+        local function stamp(field, px, py, pz, qr)
             local slot = param:get_field(field)
             if not slot then return end
             pcall(function() slot:set_field("_Pos", Vector3f.new(px, py, pz)) end)
-            pcall(function() slot:set_field("_Rot", q) end)
+            pcall(function() slot:set_field("_Rot", qr or q) end)
         end
-        stamp("Player", p.x + rx * 0.9, p.y, p.z + rz * 0.9)
+
+        local pp, cp, cq = nil, nil, nil
+        pcall(function()
+            local ptf = _char_go(_player()):call("get_Transform")
+            pp = (space == "render") and ptf:call("get_Position")
+                or ptf:call("get_UniversalPosition")
+            local dx, dz = pp.x - p.x, pp.z - p.z
+            if dx * dx + dz * dz > 36.0 then pp = nil end
+        end)
+        pcall(function()
+            local cm = sdk.get_managed_singleton("app.CameraManager")
+            local cgo = cm and cm:call("getCameraGameObject")
+            if not cgo then
+                local cam = cm and cm:call("getMainCamera")
+                cgo = cam and cam:call("get_GameObject")
+            end
+            local ctf = cgo and cgo:call("get_Transform")
+            cp = (space == "render") and ctf:call("get_Position")
+                or ctf:call("get_UniversalPosition")
+            cq = ctf:call("get_Rotation")
+        end)
+        if pp and reverse_player == true then
+            local pyaw = yaw + math.pi * 0.5
+            player_q = ValueType.new(sdk.find_type_definition("via.Quaternion"))
+            player_q.x, player_q.y, player_q.z, player_q.w = 0,
+                math.sin(pyaw * 0.5), 0, math.cos(pyaw * 0.5)
+            local side = (pp.x - p.x) * rx + (pp.z - p.z) * rz
+            stamp("Player", pp.x - rx * side + fx * 0.55,
+                pp.y, pp.z - rz * side + fz * 0.55, player_q)
+        elseif pp then stamp("Player", pp.x, pp.y, pp.z, player_q)
+        else stamp("Player", p.x, p.y, p.z, player_q) end
         stamp("Main",   p.x + rx * 1.8 + fx * 1.1, p.y, p.z + rz * 1.8 + fz * 1.1)
         stamp("Sub1",   p.x + rx * 1.8,            p.y, p.z + rz * 1.8)
         stamp("Sub2",   p.x + rx * 1.8 - fx * 1.1, p.y, p.z + rz * 1.8 - fz * 1.1)
-        stamp("Camera", p.x + rx * 0.9 - fx * 1.6, p.y + 1.4, p.z + rz * 0.9 - fz * 1.6)
+        if cp then stamp("Camera", cp.x, cp.y, cp.z, cq)
+        else stamp("Camera", p.x + rx * 0.9 - fx * 1.6,
+            p.y + 1.4, p.z + rz * 0.9 - fz * 1.6) end
         ok = true
     end)
     return ok
 end
 
--- Construct a private InnAwakeParam. Borrowing a live inn's parameter and rewriting it
--- changes that real bed for the rest of the session and can leave FacilityManager holding
--- stale scene data. These six tiny objects live for the script lifetime and are reused.
-local function _br_new_param()
-    if _managed(BR.work_param) then return BR.work_param end
-    local param = nil
-    local ok = pcall(function()
-        param = sdk.create_instance("app.FacilityManager.InnAwakeParam")
-        if not param then error("InnAwakeParam unavailable") end
-        pcall(function() param:call(".ctor()") end)
-        pcall(function() param:add_ref_permanent() end)
-        for _, field in ipairs({ "Camera", "Player", "Main", "Sub1", "Sub2" }) do
-            local slot = sdk.create_instance(
-                "app.FacilityManager.InnAwakeParam.ObjectSetting")
-            if not slot then error("ObjectSetting unavailable: " .. field) end
-            pcall(function() slot:call(".ctor()") end)
-            pcall(function() slot:add_ref_permanent() end)
-            param:set_field(field, slot)
-        end
-    end)
-    if not (ok and _managed(param)) then
-        _st_log("bed rest: could not construct a private InnAwakeParam")
-        return nil
+local BR_PARAM_FIELDS = { "Camera", "Player", "Main", "Sub1", "Sub2" }
+
+local function _br_memberwise_clone(obj)
+    if not _managed(obj) then return nil end
+    local clone = nil
+    pcall(function() clone = obj:call("MemberwiseClone") end)
+    if not clone then
+        pcall(function()
+            local td = sdk.find_type_definition("System.Object")
+            local mm = td and td:get_method("MemberwiseClone()")
+            clone = mm and mm:call(obj)
+        end)
     end
-    BR.work_param = param
+    if _managed(clone) then
+        pcall(function() clone:add_ref_permanent() end)
+        return clone
+    end
+    return nil
+end
+
+local function _br_clone_param(donor)
+    local param = _br_memberwise_clone(donor)
+    if not param then return nil end
+    for _, field in ipairs(BR_PARAM_FIELDS) do
+        local source = nil
+        pcall(function() source = donor:get_field(field) end)
+        local slot = _br_memberwise_clone(source)
+        if not slot then return nil end
+        local wrote = pcall(function() param:set_field(field, slot) end)
+        if not wrote then return nil end
+    end
     return param
 end
 
--- Every non-native bed gets private settings aimed at its current transform.
-local function _br_inn_param(io)
-    if M.bed_rest_anywhere == false then return nil, false end
-    local param = _br_new_param()
-    if not param then return nil, false end
-    local _, space = _br_donor_param()
-    space = space or "universal"
-    if _br_aim_param(param, io, space) then return param, false end
+local function _br_inn_param(io, reverse_player)
+    if M.bed_rest_anywhere == false and reverse_player == true then return nil, false end
+    local donor, space = _br_donor_param()
+    if not donor then
+        _st_log("bed rest: no live inn parameter exists to clone")
+        return nil, false
+    end
+    local param = _br_clone_param(donor)
+    if not param then
+        _st_log("bed rest: could not clone the inn parameter graph")
+        return nil, false
+    end
+    if _br_aim_param(param, io, space, reverse_player) then return param, false end
+    _st_log("bed rest: cloned parameter could not be aimed at this bed")
     return nil, false
 end
 
--- hands the sleep to the game, using the bed's own inn settings
-local function _br_sleep(morning)
-    -- use the settings captured when the menu opened, looking again would find a
-    -- donor we already re-aimed and reject it
-    local param = BR.param
-    _st_log(string.format("bed rest: innParam=%s (%s)",
-        tostring(param ~= nil), BR.own and "the bed's own" or "borrowed"))
-
-    local fm = sdk.get_managed_singleton("app.FacilityManager")
-    local done = false
-    if fm and param then
-        local td = sdk.find_type_definition("app.FacilityManager")
-        for _, mm in ipairs((td and td:get_methods()) or {}) do
-            if done then break end
-            local nm
-            pcall(function() nm = mm:get_name() end)
-            if nm == "startInn" or nm == "startInnNoLock" then
-                local r, err
-                local ran = pcall(function()
-                    r = mm:call(fm, morning and true or false, 0, param, 0, nil, 0)
-                end)
-                if not ran then
-                    pcall(function()
-                        local ok2, e2 = pcall(function()
-                            r = mm:call(fm, morning and true or false, 0, param)
-                        end)
-                        err = ok2 and "3 args" or tostring(e2)
-                    end)
-                end
-                _st_log(string.format("bed rest: %s returned %s %s",
-                    nm, tostring(r), tostring(err or "")))
-                if r == true then done = true end
-            end
+local function _br_session_param(sess)
+    local bed = sess and sess.rec and sess.rec.owner
+    local override = BR.home_override or rawget(_G, "InteractablesHomeBedOverrideV2")
+    if _managed(bed) and override and override.value == true
+            and _addr(override.bed) == _addr(bed) then
+        local native = nil
+        pcall(function() native = bed:get_field("InnParam") end)
+        if _managed(native) then
+            _st_log("bed rest: retaining this home bed's authored wake and camera settings")
+            return native, false
         end
     end
-    _st_log("bed rest: " .. (morning and "morning" or "night")
-        .. (done and " - startInn accepted" or " - startInn refused"))
-    return done
+    return _br_inn_param(sess and sess.io,
+        sess and sess.rec and sess.rec.native_player ~= true)
+end
+
+local function _br_tsm_running()
+    local running = false
+    pcall(function()
+        local tsm = sdk.get_managed_singleton("app.TimeSkipManager")
+        running = tsm and tsm:call("get_IsExecute") == true or false
+    end)
+    return running
+end
+
+local function _br_inn_state(fm)
+    local state = nil
+    pcall(function()
+        local v = fm and fm:call("get_NowInnState")
+        state = tonumber(v)
+        if state == nil and v then state = tonumber(v:get_field("value__")) end
+    end)
+    return state
+end
+
+local function _br_inn_ended(fm)
+    local ended = false
+    pcall(function() ended = fm and fm:call("IsInnStateEnd") == true or false end)
+    return ended
+end
+
+local function _br_bed_state(bed)
+    local state = nil
+    pcall(function()
+        local v = bed and bed:get_field("NowMyRoomState")
+        state = tonumber(v)
+        if state == nil and v then state = tonumber(v:get_field("value__")) end
+    end)
+    return state
+end
+
+local function _br_restore_transition_fields(transition)
+    if not (transition and transition.fields_applied and _managed(transition.bed)) then
+        return true
+    end
+    local restored, failure = pcall(function()
+        if transition.restore_param then
+            transition.bed:set_field("InnParam", transition.original_param)
+        end
+        if transition.original_use ~= nil then
+            transition.bed:set_field("IsUseMyRoom", transition.original_use == true)
+        end
+    end)
+    if restored then
+        transition.fields_applied = false
+        transition.fields_restored = true
+    else
+        _st_log("bed rest: native bed fields could not be restored: " .. tostring(failure))
+    end
+    return restored
+end
+
+local function _br_clear_transition(message)
+    local transition = BR.transition
+    if transition and (transition.phase == "generic_dialog"
+            or transition.phase == "generic_dialog_pending") then
+        _br_dialog_close()
+    end
+    _br_restore_transition_fields(transition)
+    BR.transition = nil
+    _G.InteractablesNativeBedRestV3 = nil
+    BR.param, BR.own = nil, nil
+    _G.Interactables_rest_transition = false
+    local still_lying = transition and transition.keep_lie_on_clear == true
+    _G.Interactables_bed_active = still_lying == true
+    if still_lying and ST.session and ST.session.rec and ST.session.rec.kind == "bed" then
+        ST.session.rest_ready = false
+        ST.session.rest_asked = false
+    end
+    _br_clear_rest_prompt()
+    if message then _st_log(message) end
+end
+
+local function _br_interacting()
+    local open = nil
+    pcall(function()
+        local ch = _player()
+        local mgr = ch and sdk.get_managed_singleton("app.InteractManager")
+        if ch and mgr then open = mgr:call("isInteracting(app.Character)", ch) == true end
+    end)
+    return open
+end
+
+function BR.request_get_up(reason, bed, point_no)
+    if BR.native_exit_pending then return true end
+
+    local active = nil
+    pcall(function()
+        local ch = _player()
+        local mgr = ch and sdk.get_managed_singleton("app.InteractManager")
+        active = mgr and mgr:call("getActiveInteract(app.Character)", ch)
+    end)
+    if not active then
+        _st_log("bed: authored get-up could not reach the live bed interaction")
+        return false
+    end
+
+    BR.native_exit_pending = {
+        reason = tostring(reason or "keyboard fallback"),
+        bed = bed,
+        point_no = tonumber(point_no) or 0,
+        queued_at = os.clock(),
+    }
+    BR.getup_requested_at = os.clock()
+    ST.status = "Getting up through the bed's authored exit..."
+    _br_clear_rest_prompt()
+    _st_log("bed: authored get-up queued by " .. tostring(reason or "keyboard fallback"))
+    return true
+end
+
+function BR.clear_wake_guard(message)
+    BR.wake_guard = nil
+    if BR.wake_mask_until then
+        BR.wake_mask_fade_at = os.clock()
+        BR.wake_mask_until = BR.wake_mask_fade_at + 0.35
+    else
+        BR.wake_mask_fade_at = nil
+    end
+    _G.InteractablesBedWakeGuardV1 = nil
+    if message then _st_log(message) end
+end
+
+function BR.arm_wake_guard(transition, now, committed)
+    local time_skip = _br_tsm_running()
+    local guard = {
+        at = now,
+        fm = transition and transition.fm or nil,
+        bed = transition and transition.bed or nil,
+        point_no = transition and transition.point_no or 0,
+        initial_state = transition and transition.initial_state or nil,
+        initial_bed_state = transition and transition.initial_bed_state or nil,
+        committed = committed == true,
+        committed_at = committed == true and now or nil,
+        saw_busy = time_skip,
+        last_busy_at = time_skip and now or nil,
+        saw_complete = false,
+        attempts = 0,
+        last_attempt_at = nil,
+    }
+    BR.wake_guard = guard
+    _G.InteractablesBedWakeGuardV1 = guard
+    _st_log("bed rest: independent post-rest wake guard armed"
+        .. (guard.committed and " (rest accepted)" or " (awaiting rest choice)"))
+end
+
+function BR.wake_guard_tick()
+    local guard = BR.wake_guard or rawget(_G, "InteractablesBedWakeGuardV1")
+    if type(guard) ~= "table" then return end
+    BR.wake_guard = guard
+
+    local now = os.clock()
+    if now - (tonumber(guard.at) or now) > 300.0 then
+        BR.clear_wake_guard("bed rest: stale post-rest wake guard expired")
+        return
+    end
+
+    local loading = _loading()
+    local time_skip = _br_tsm_running()
+    local busy_now = time_skip
+    local menu = _menu_open()
+    local interacting = _br_interacting()
+    local wait_end = _player_fsm_has_node("WaitEndJack")
+    local jacked = nil
+    pcall(function()
+        local ch = _player()
+        if ch then jacked = ch:call("get_IsJacked") == true end
+    end)
+    local motion_bank, motion_id = nil, nil
+    pcall(function()
+        local motion = _st_motion()
+        local layer = motion and motion:call("getLayer", 0)
+        if layer then
+            motion_bank = tonumber(layer:call("get_MotionBankID"))
+            motion_id = tonumber(layer:call("get_MotionID"))
+        end
+    end)
+    local state = _br_inn_state(guard.fm)
+    local bed_state = _br_bed_state(guard.bed)
+    local transition = BR.transition
+    if busy_now then
+        guard.saw_busy = true
+        guard.last_busy_at = now
+        BR.wake_mask_fade_at = nil
+        BR.wake_mask_until = math.max(tonumber(BR.wake_mask_until) or 0, now + 20.0)
+    end
+    if state == 26 then guard.saw_complete = true end
+    local committed = guard.committed == true
+        or busy_now or state == 26 or bed_state == 3
+        or (transition and (transition.saw_sleep == true
+            or transition.saw_inn_progress == true))
+
+    if committed and guard.committed ~= true then
+        guard.committed = true
+        guard.committed_at = now
+        _st_log("bed rest: post-rest wake guard observed the native rest cycle")
+    end
+
+    if guard.committed ~= true then
+        if not transition and interacting == false and not menu
+                and _player_fsm_has_node("NormalLocomotion")
+                and now - (tonumber(guard.at) or now) >= 1.5 then
+            BR.clear_wake_guard("bed rest: wake guard released after cancelled rest")
+        end
+        return
+    end
+
+    if busy_now or loading or menu then return end
+
+    local post_busy = guard.saw_busy == true and guard.last_busy_at ~= nil
+        and now - (tonumber(guard.last_busy_at) or now) >= 0.35
+    local wake_window = post_busy
+
+    if wake_window then
+        if interacting ~= false then return end
+
+        if guard.recovery_started ~= true then
+            guard.recovery_started = true
+            guard.recovery_at = now
+            guard.attempts = 0
+            guard.last_attempt_at = nil
+            guard.normal_since = nil
+            BR.native_exit_pending = nil
+            BR.native_exit_active = nil
+            BR.wake_mask_fade_at = nil
+            BR.wake_mask_until = now + 8.25
+        end
+
+        local recovery_age = now - (tonumber(guard.recovery_at) or now)
+        local normal = jacked == false and not wait_end
+            and motion_bank == 0 and motion_id == 1
+            and _player_fsm_has_node("NormalLocomotion")
+        if normal then
+            guard.normal_since = guard.normal_since or now
+            if now - (tonumber(guard.normal_since) or now) >= 0.35 then
+                if BR.transition then
+                    BR.transition.keep_lie_on_clear = false
+                    _br_clear_transition("bed rest: isolated wake recovery completed")
+                end
+                BR.clear_wake_guard("bed rest: player returned stably to normal locomotion")
+                return
+            end
+        else
+            guard.normal_since = nil
+        end
+
+        local stuck = jacked == true or wait_end
+        if stuck and (tonumber(guard.attempts) or 0) < 4
+                and (not guard.last_attempt_at
+                or now - (tonumber(guard.last_attempt_at) or 0) >= 0.5) then
+            guard.last_attempt_at = now
+            guard.attempts = (tonumber(guard.attempts) or 0) + 1
+            _st_restore_player_after_native_exit(
+                "bed rest isolated wake attempt " .. tostring(guard.attempts),
+                jacked == true)
+        end
+
+        if recovery_age >= 8.0 then
+            if BR.transition then
+                BR.transition.keep_lie_on_clear = false
+                _br_clear_transition("bed rest: isolated wake recovery timed out safely")
+            end
+            _st_restore_player_after_native_exit("bed rest final isolated wake attempt",
+                jacked == true)
+            BR.clear_wake_guard("bed rest: wake mask released at the safe timeout")
+        end
+        return
+    end
+
+    if now - (tonumber(guard.committed_at or guard.at) or now) > 45.0 then
+        BR.clear_wake_guard("bed rest: post-rest wake guard ended without a completed native time-skip")
+    end
+end
+
+local function _br_restore_home(reason)
+    local override = BR.home_override or rawget(_G, "InteractablesHomeBedOverrideV2")
+    if not override then return true end
+    local restored, err = pcall(function()
+        override.bed:set_field("IsUseMyRoom", override.value == true)
+    end)
+    if restored then
+        BR.home_override = nil
+        _G.InteractablesHomeBedOverrideV2 = nil
+    end
+    local trace = rawget(_G, "InteractablesHomeBedTrace")
+    if type(trace) == "table" then
+        trace.after_exit = _br_native_state(override.bed)
+        trace.restore_ok, trace.restore_error = tostring(restored), tostring(err)
+    end
+    _st_log("home bed: home flag " .. (restored and "restored after "
+        .. tostring(reason or "authored exit") or ("restore FAILED: " .. tostring(err))))
+    return restored
+end
+
+local function _br_arm_native_rest(sess, now)
+    local bed = sess and sess.rec and sess.rec.owner
+    local io = sess and sess.io
+    local param = BR.param
+    local player = _player()
+    if not _managed(bed) and _managed(io) then
+        pcall(function()
+            local go = io:call("get_Owner")
+            if not go then go = io:get_field("<Owner>k__BackingField") end
+            bed = go and go:call("getComponent(System.Type)", sdk.typeof("app.Gm51_115"))
+        end)
+        if _managed(bed) and sess and sess.rec then sess.rec.owner = bed end
+    end
+    if not _managed(io) or not _managed(param) or not _managed(player) then
+        _st_log(string.format(
+            "bed rest: hand-off refused (owner=%s interaction=%s player=%s wake=%s)",
+            tostring(_managed(bed)), tostring(_managed(io)), tostring(_managed(player)),
+            tostring(_managed(param))))
+        return false
+    end
+
+    local original_param, original_use = nil, nil
+    local my_room_capable = false
+    if _managed(bed) then
+        pcall(function() original_param = bed:get_field("InnParam") end)
+        pcall(function() original_use = bed:get_field("IsUseMyRoom") == true end)
+        pcall(function()
+            local td = bed:get_type_definition()
+            if td and tostring(td:get_full_name()) == "app.Gm51_115" then
+                my_room_capable = true
+            elseif td then
+                for _, method in ipairs(td:get_methods() or {}) do
+                    if method:get_name() == "setMyRoomState" then
+                        my_room_capable = true
+                        break
+                    end
+                end
+            end
+        end)
+    end
+
+    local fm = sdk.get_managed_singleton("app.FacilityManager")
+    if not _managed(fm) then
+        _st_log("bed rest: FacilityManager was unavailable; still lying normally")
+        return false
+    end
+
+    if not my_room_capable then
+        _st_log("bed rest: this sheet has no Gm51_115 state machine; native rest refused safely")
+        return false
+    end
+    local promoted = not _managed(original_param)
+    if promoted then
+        _st_log("bed rest: promoting parameterless Gm51_115 through its native My Room cycle")
+    end
+
+    local override = BR.home_override or rawget(_G, "InteractablesHomeBedOverrideV2")
+    if override and _addr(override.bed) == _addr(bed) then
+        original_use = override.value == true
+    end
+
+    if my_room_capable then
+        _st_log("bed rest: settled lying position retained; wake heading aligned to bed transform")
+    end
+
+    BR.transition = {
+        phase = "native_state_pending", at = now, until_at = now + 240.0,
+        fm = fm, bed = bed, io = io,
+        point_no = sess and sess.point_no or 0,
+        original_param = original_param, original_use = original_use,
+        param = param, restore_param = true, fields_applied = false,
+        promoted = promoted,
+        initial_state = _br_inn_state(fm),
+        initial_bed_state = _br_bed_state(bed),
+        saw_open = true, saw_state = false, saw_menu = false, saw_busy = false,
+        keep_lie_on_clear = true,
+    }
+    _G.InteractablesNativeBedRestV3 = BR.transition
+    BR.handoff_until = now + 1.5
+    _G.Interactables_rest_transition = true
+    _G.Interactables_bed_active = true
+    _br_clear_rest_prompt()
+    _st_log("bed rest: native My Room menu state queued on the live lying interaction")
+    return true
 end
 
 local function _br_tick()
-    if BR.want and not BR.open then
-        local w = BR.want
-        if os.clock() - (tonumber(w.at) or 0) > 3.0 then
-            BR.want = nil
-            _st_log("bed rest: gui never loaded, giving up")
-        else
-            _br_show(w.io)
+    local now = os.clock()
+
+    if not BR.bootstrap_checked then
+        local player_ready = _managed(_player())
+        local inherited = nil
+        pcall(function()
+            local a = _active_native()
+            if a and a.rec and a.rec.kind == "bed" then inherited = a end
+        end)
+        if inherited then
+            BR.bootstrap_checked = true
+            _G.Interactables_bed_active = true
+            _st_log("bed: inherited lying session adopted after script reload")
+        elseif player_ready then
+            BR.bootstrap_checked = true
         end
-        return
     end
-    if not BR.open then return end
-    local sel = _mc_pick()
-    if sel == nil or sel == BR.baseline then
-        if os.clock() - (tonumber(BR.at) or 0) > 90.0 then _br_close() end
-        return
+
+    local open = _br_interacting()
+    local override = BR.home_override or rawget(_G, "InteractablesHomeBedOverrideV2")
+    if override then
+        BR.home_override = override
+        if open == true then override.saw_open = true end
     end
-    _br_close()
-    if sel == 1 or sel == 2 then
-        -- Do not abort the interaction first: that was ending the lie-down and
-        -- invalidating the bed state before FacilityManager could accept the rest.
-        local done = _br_sleep(sel == 1)
-        BR.handoff_until = os.clock() + (done and 3.0 or 0.5)
-        if done and ST.session then ST.session.rest_started = true end
+
+    if override and override.saw_open and open == false then
+        _br_restore_home("authored A get-up")
+        _G.Interactables_bed_active = false
+    end
+
+    local transition = BR.transition
+    if transition then
+        if transition.phase == "generic_dialog_pending" then
+            if now - (tonumber(transition.at) or now) >= 3.0 then
+                _br_clear_transition("bed rest: native dialog did not load; still lying normally")
+            end
+            return
+        end
+
+        if transition.phase == "generic_dialog" then
+            local choice = _br_dialog_choice(transition, now)
+            if choice == "cancel" then
+                _br_dialog_close()
+                _br_clear_transition("bed rest: Morning/Nightfall choice cancelled")
+            elseif choice ~= nil then
+                _br_dialog_close()
+                transition.chosen_morning = choice == true
+                transition.phase = "generic_start_pending"
+                transition.at = now
+                _st_log("bed rest: " .. (choice and "Morning" or "Nightfall")
+                    .. " chosen; native facility rest queued")
+            elseif now - (tonumber(transition.dialog_opened_at) or now) >= 60.0 then
+                _br_clear_transition("bed rest: Morning/Nightfall dialog timed out")
+            end
+            return
+        end
+
+        if transition.phase == "generic_start_pending" then
+            if now - (tonumber(transition.at) or now) >= 2.0 then
+                _br_clear_transition("bed rest: native FacilityManager request never ran; still lying normally")
+            end
+            return
+        end
+
+        if transition.phase == "native_state_pending" then
+            if now - (tonumber(transition.at) or now) >= 2.0 then
+                _br_clear_transition("bed rest: native menu request never reached the game update thread; still lying normally")
+            end
+            return
+        end
+
+        if transition.phase == "native_menu" then
+            local tsm_running = _br_tsm_running()
+            local loading = _loading()
+            local menu = _menu_open()
+            local busy = tsm_running or loading or menu
+            if menu then transition.saw_menu = true end
+            if tsm_running then
+                transition.saw_busy = true
+                transition.quiet_at = nil
+            end
+
+            local state = _br_inn_state(transition.fm)
+            if state ~= transition.initial_state then transition.saw_state = true end
+            if state ~= nil and state ~= 0 and state ~= transition.initial_state then
+                transition.saw_inn_progress = true
+            end
+            if state ~= transition.last_inn_state then
+                transition.last_inn_state = state
+                _st_log("bed rest: native inn state " .. tostring(state))
+            end
+            if transition.saw_inn_progress and state == 0 then
+                _br_restore_transition_fields(transition)
+            end
+            local bed_state = _br_bed_state(transition.bed)
+            if bed_state ~= transition.initial_bed_state then transition.saw_state = true end
+            if bed_state == 2 then transition.saw_menu_state = true end
+            if bed_state == 3 then transition.saw_sleep = true end
+
+            local wake = BR.wake_guard or rawget(_G, "InteractablesBedWakeGuardV1")
+            if type(wake) == "table" and wake.recovery_started == true then
+                return
+            end
+
+            local facility_started = transition.saw_sleep or transition.saw_busy
+                or transition.saw_inn_progress
+            if not facility_started and (transition.saw_menu or transition.saw_menu_state)
+                    and not menu and open == false then
+                transition.cancel_quiet_at = transition.cancel_quiet_at or (now + 0.75)
+            else
+                transition.cancel_quiet_at = nil
+            end
+            if transition.cancel_quiet_at and now >= transition.cancel_quiet_at then
+                _br_clear_transition("bed rest: native rest menu cancelled")
+                return
+            end
+
+            local facility_complete = _br_inn_ended(transition.fm)
+                or state == 26
+                or (transition.saw_inn_progress and state == 0)
+            local returned_idle = transition.saw_state and state == 0 and open == false
+                and not menu and now - (tonumber(transition.entry_at) or now) >= 3.0
+            local returned_from_busy = transition.saw_busy and not busy and open == false
+                and not menu and now - (tonumber(transition.entry_at) or now) >= 3.0
+            if transition.saw_busy and not busy and facility_complete then
+                transition.quiet_at = transition.quiet_at or (now + 1.5)
+            elseif transition.saw_busy and (returned_idle or returned_from_busy) then
+                transition.quiet_at = transition.quiet_at or (now + 1.5)
+            elseif busy or not facility_complete then
+                transition.quiet_at = nil
+            end
+            if transition.quiet_at and now >= transition.quiet_at then
+                transition.keep_lie_on_clear = false
+                _br_clear_transition("bed rest: native FacilityManager rest completed cleanly")
+                _st_restore_player_after_native_exit("bed rest", true)
+                return
+            end
+            if now >= (tonumber(transition.until_at) or (now + 1.0)) then
+                transition.keep_lie_on_clear = false
+                _br_clear_transition("bed rest: native facility flow timed out; transition guard released")
+                _st_restore_player_after_native_exit("bed rest timeout", true)
+                return
+            end
+            return
+        end
+
+        _br_clear_transition("bed rest: unknown transition state discarded")
+        return
     end
 end
 
--- watches the current work session
+local BR_START_INN_METHOD = nil
+local function _br_start_inn_method()
+    if BR_START_INN_METHOD then return BR_START_INN_METHOD end
+    pcall(function()
+        local td = sdk.find_type_definition("app.FacilityManager")
+        for _, method in ipairs(td and td:get_methods() or {}) do
+            if method:get_name() == "startInn" and method:get_num_params() == 6 then
+                BR_START_INN_METHOD = method
+                break
+            end
+        end
+    end)
+    return BR_START_INN_METHOD
+end
+
+re.on_application_entry("UpdateBehavior", function()
+    if M.master == false then return end
+
+    local native_exit = BR.native_exit_pending
+    if native_exit then
+        BR.native_exit_pending = nil
+        local player = _player()
+        local mgr = _managed(player) and sdk.get_managed_singleton("app.InteractManager") or nil
+        local active = nil
+        pcall(function()
+            active = mgr and mgr:call("getActiveInteract(app.Character)", player)
+        end)
+
+        local ran, result, route = false, nil, "unavailable"
+        if _managed(active) and _managed(mgr) then
+            route = "InteractManager.cancelInteract"
+            ran, result = pcall(function()
+                return mgr:call("cancelInteract(app.Character)", player)
+            end)
+        end
+
+        native_exit.ran_at = os.clock()
+        native_exit.ok = ran == true
+        native_exit.route = route
+        native_exit.result = result
+        BR.native_exit_active = native_exit
+    end
+
+    local transition = BR.transition
+    if not transition then return end
+
+    local phase = transition.phase
+    if phase ~= "native_state_pending" and phase ~= "generic_dialog_pending"
+            and phase ~= "generic_start_pending" then return end
+
+    local player = _player()
+    local mgr = _managed(player) and sdk.get_managed_singleton("app.InteractManager") or nil
+    local exact_bed, interacting = false, false
+    pcall(function()
+        interacting = mgr:call("isInteracting(app.Character)", player) == true
+        local active = mgr:call("getActiveInteract(app.Character)", player)
+        local point = active and active:get_field("Point")
+        local active_io = point and point:get_field("Object")
+        exact_bed = active_io and _addr(active_io) == _addr(transition.io) or false
+    end)
+    local target_ok = transition.generic == true
+        or _managed(transition.bed)
+    if not (interacting and exact_bed and target_ok and _managed(transition.param)) then
+        _br_clear_transition("bed rest: live-bed revalidation refused the target; still lying normally")
+        return
+    end
+
+    if phase == "generic_dialog_pending" then
+        if not _br_dialog_show(transition) then return end
+        transition.phase = "generic_dialog"
+        transition.entry_at = os.clock()
+        transition.saw_menu = true
+        _G.Interactables_bed_active = true
+        _br_clear_rest_prompt()
+        _st_log("bed rest: ordinary-bed Morning/Nightfall dialog opened")
+        return
+    end
+
+    if phase == "generic_start_pending" then
+        local method = _br_start_inn_method()
+        if not method or not _managed(transition.fm) then
+            _br_clear_transition("bed rest: native FacilityManager.startInn was unavailable; still lying normally")
+            return
+        end
+        local ran, accepted = pcall(function()
+            return method:call(transition.fm, transition.chosen_morning == true, 0,
+                transition.param, 1857826560, nil, 1)
+        end)
+        local accepted_ok = accepted == true or tonumber(accepted) == 1
+        if not ran or not accepted_ok then
+            local failure = ran and ("startInn returned " .. tostring(accepted))
+                or tostring(accepted)
+            _br_clear_transition("bed rest: native FacilityManager rejected ordinary-bed rest: "
+                .. tostring(failure))
+            return
+        end
+
+        local now = os.clock()
+        transition.phase = "native_menu"
+        transition.entry_at = now
+        transition.until_at = now + 240.0
+        transition.keep_lie_on_clear = true
+        local state = _br_inn_state(transition.fm)
+        transition.saw_state = state ~= transition.initial_state
+        transition.saw_inn_progress = state ~= nil and state ~= 0
+            and state ~= transition.initial_state
+        transition.saw_busy = _br_tsm_running()
+        transition.saw_menu = true
+        _G.Interactables_bed_active = true
+        BR.arm_wake_guard(transition, now, true)
+        _st_log("bed rest: ordinary bed entered native FacilityManager rest")
+        return
+    end
+
+    local ran, failure = pcall(function()
+        transition.fields_applied = true
+        transition.bed:set_field("InnParam", transition.param)
+        transition.bed:set_field("IsUseMyRoom", true)
+        transition.bed:call("setMyRoomState(app.Gm51_115.MyRoomStateKind)", 2)
+    end)
+    if not ran then
+        _br_clear_transition("bed rest: native Morning/Nightfall menu FAILED safely: "
+            .. tostring(failure))
+        return
+    end
+
+    local now = os.clock()
+    transition.phase = "native_menu"
+    transition.entry_at = now
+    transition.until_at = now + 240.0
+    transition.keep_lie_on_clear = transition.promoted == true
+    transition.saw_state = _br_bed_state(transition.bed) ~= transition.initial_bed_state
+    transition.saw_menu_state = _br_bed_state(transition.bed) == 2
+    transition.saw_menu = _menu_open()
+    transition.saw_busy = _br_tsm_running()
+    _G.Interactables_bed_active = true
+    _br_clear_rest_prompt()
+    BR.arm_wake_guard(transition, now, false)
+    _st_log("bed rest: native Morning/Nightfall menu requested on the live lying interaction")
+end)
+
 local function _st_frame()
     pcall(_st_cam_tick)
-    if M.stations == false and M.native_beds == false then
+    if not ST.any_activity_enabled() and M.native_beds == false then
         ST.session, ST.pending = nil, nil
         return
     end
@@ -3249,13 +4798,13 @@ local function _st_frame()
 
     local down = _stop_down()
     local kill = _binding_down(M.stop_bind or "backspace")
+    local jump = _binding_down(M.rest_bind or "space")
     local edge_btn  = down and not ST.prev
     local edge_kill = kill and not ST.kill_prev
-    ST.prev, ST.kill_prev = down, kill
+    local edge_jump = jump and not ST.jump_prev
+    ST.prev, ST.kill_prev, ST.jump_prev = down, kill, jump
 
-    -- Confirming the rest dialog uses the same action as Interact. Consume it here;
-    -- otherwise the confirmation also aborts the bed on this very frame.
-    if BR.open or BR.want or now < (tonumber(BR.handoff_until) or 0) then return end
+    if BR.transition or now < (tonumber(BR.handoff_until) or 0) then return end
 
     local pend = ST.pending
     if pend then
@@ -3299,25 +4848,25 @@ local function _st_frame()
             local id = _addr(a.io) or tostring(a.key)
             if not ST.session or ST.session.id ~= id then
                 ST.session = { id = id, rec = a.rec, key = a.key, io = a.io,
+                               point_no = a.point_no,
                                host = tostring((a.rec and a.rec.host) or a.key or "?"),
                                since = now }
+                local carry_key = _norm(a.key or (a.rec and a.rec.prop_key))
+                if carry_key and CARRY_KEYS[carry_key] then
+                    CARRY.native_arm_until = now + 3.0
+                end
+                if a.rec and a.rec.kind == "bed" then
+                    _G.Interactables_bed_active = true
+                end
                 local nice = (a.key and STATIONS[a.key] and STATIONS[a.key].label)
                     or ST.session.host
-                ST.status = string.format("Working: %s - press Interact (or BACKSPACE) to stop",
-                    tostring(nice))
-                _logf("station native session begun: %s", ST.session.host)
-
-                -- Vanilla player beds jump straight to the rest UI. Ask the bed to
-                -- begin its own sleep clip once; the native UI and FacilityManager
-                -- remain untouched and continue to own the actual rest.
-                if a.rec and a.rec.kind == "bed" and a.rec.native_player
-                        and _managed(a.rec.owner) then
-                    local animated = pcall(function() a.rec.owner:call("execSleep") end)
-                    ST.session.native_rest = true
-                    ST.session.sleep_started = animated
-                    _st_log("native bed lie-down animation: "
-                        .. (animated and "requested" or "unavailable"))
+                if a.rec and a.rec.kind == "bed" then
+                    ST.status = "Lying down - A/Jump gets up; B/Interact opens native rest"
+                else
+                    ST.status = string.format("Working: %s - press Interact (or BACKSPACE) to stop",
+                        tostring(nice))
                 end
+                _logf("station native session begun: %s", ST.session.host)
 
                 local strow = a.key and STATIONS[a.key]
                 if strow then strow = { conjure = strow.conjure, label = strow.label } end
@@ -3332,22 +4881,23 @@ local function _st_frame()
                     end)
                     if heldid == 0 and _st_conjure(strow.conjure, true) then
                         ST.conjured = strow.conjure
-                        ST.conj_at, ST.conj_probed = now, false
                     end
                 end
             end
         else
+            if ST.session and ST.session.rec and ST.session.rec.kind == "bed"
+                    and not BR.transition then
+                _G.Interactables_bed_active = false
+            end
             ST.session = nil
         end
     end
 
     if ST.conjured and not ST.session and not ST.pending then
         _st_conjure(ST.conjured, false, true)
-        ST.conjured, ST.conj_at, ST.conj_probed, ST.conj_restage = nil, nil, nil, nil
+        ST.conjured, ST.conj_restage = nil, nil
     end
 
-    -- the game clears the prop slot every frame, so claim it back every frame too,
-    -- re-claiming a slot that already holds our item is a cheap update, not a respawn
     if ST.conjured and ST.session then
         local held = false
         pcall(function()
@@ -3368,121 +4918,115 @@ local function _st_frame()
         if not held then _st_conjure(ST.conjured, true, true) end
     end
 
-    if M.dev == true and ST.conjured and ST.session and ST.conj_at and not ST.conj_probed
-        and os.clock() - ST.conj_at > 1.5 then
-        ST.conj_probed = true
-        pcall(function()
-            local ch = _player()
-            local human = ch and ch:call("get_Human")
-            local ctrl = human and human:call("get_EquipItemCtrl")
-            if not ctrl then _st_log("CONJPROBE: no EquipItemCtrl") return end
-            local en = "?"
-            pcall(function() en = tostring(ctrl:call("get_IsEnable")) end)
-            local arr = ctrl:get_field("Controllers")
-            local n = 0
-            pcall(function() n = tonumber(arr:call("get_Length")) or 0 end)
-            if n == 0 then pcall(function() n = tonumber(arr:get_size()) or 0 end) end
-            local hits, readable = 0, 0
-            for i = 0, n - 1 do
-                local c = nil
-                pcall(function() c = arr:get_element(i) end)
-                if c then
-                    readable = readable + 1
-                    local act, item, joint, draw, created = "?", -1, "?", "?", "?"
-                    pcall(function() act = tostring(c:call("get_IsActive")) end)
-                    pcall(function() item = tonumber(c:get_field("<ItemID>k__BackingField")) or -1 end)
-                    pcall(function() joint = tostring(c:get_field("ParentJoint")) end)
-                    pcall(function() draw = tostring(c:get_field("IsDraw")) end)
-                    pcall(function() created = tostring(c:get_field("IsItemCreated")) end)
-
-                    local igo = "nil"
-                    pcall(function()
-                        local g = c:get_field("Item")
-                        if g then igo = tostring(g:call("get_Name")) end
-                    end)
-                    if act == "true" or (item and item > 0) then
-                        hits = hits + 1
-                        _st_log(string.format(
-                            "CONJPROBE slot %d: active=%s item=%d joint=%s draw=%s created=%s itemGO=%s",
-                            i, act, item, joint, draw, created, igo))
-                    end
-                end
-            end
-
-            _st_log(string.format("CONJPROBE done: enable=%s slots=%d readable=%d active/holding=%d",
-                en, n, readable, hits))
-        end)
-    end
-
     local sess = ST.session
     if not sess then
 
+        _br_clear_rest_prompt()
+
         if edge_kill then
             local open = false
+            local active_kind = nil
             pcall(function()
                 local ch = _player()
                 local mgr = sdk.get_managed_singleton("app.InteractManager")
                 open = ch and mgr and mgr:call("isInteracting(app.Character)", ch) == true
+                local a = _active_native()
+                active_kind = a and a.rec and a.rec.kind
             end)
-            if open then _st_release("backspace (unclassified interaction)") end
+            if open and active_kind ~= "bed" then
+                _st_release("backspace (unclassified interaction)")
+            elseif open then
+                _st_log("backspace ignored for unclassified lying bed - native owner must exit it")
+            end
         end
         return
     end
 
     pcall(function()
         local IP = _G.IrisPrompt
-        if not (IP and type(IP.set) == "function") then return end
+        if not IP then return end
         local pgo = _char_go(_player())
         local p = pgo and _pos(pgo)
-        IP.set("interactables_station", "Stop", 5, 0.05, p, pgo)
+        local bed = sess.rec and sess.rec.kind == "bed"
+        if not bed and type(IP.set) == "function" then
+            IP.set("interactables_station", "Stop", 5, 0.05, p, pgo)
+        end
+        if bed then
+            _br_set_rest_prompt("Get Up", sess.rest_ready and "Rest" or nil)
+        end
     end)
 
-    if edge_kill then return _st_release("backspace") end
+    if edge_kill then
+        if sess.rec and sess.rec.kind == "bed" then
+            if sess.rest_ready then
+                _br_arm_native_rest(sess, now)
+            else
+                _st_log("bed rest: Backspace arrived before the sleeper had settled")
+            end
+            return
+        end
+        return _st_release("backspace")
+    end
 
-    -- once she has settled into the bed, ask how long she wants to sleep
-    if M.bed_rest ~= false and not BR.open and sess.rec and sess.rec.kind == "bed"
-            and not sess.rec.native_player
+    if edge_jump and sess.rec and sess.rec.kind == "bed"
+            and now - (tonumber(sess.since) or 0) > 0.5 then
+        BR.request_get_up("keyboard " .. tostring(M.rest_bind or "space"),
+            sess.rec.owner, sess.point_no)
+        return
+    end
+
+    if M.bed_rest ~= false and sess.rec and sess.rec.kind == "bed"
+            and (not sess.rec.native_player
+                or (BR.home_stage_addr and BR.home_stage_addr == _addr(sess.rec.owner)
+                    and now - (tonumber(BR.home_stage_at) or 0) < 30.0))
             and not sess.rest_asked then
-        local settled = false
-        pcall(function()
-            local motion = _st_motion()
-            local layer = motion and motion:call("getLayer", 0)
-            if not layer then return end
-            local f  = tonumber(layer:call("get_Frame")) or 0
-            local ef = tonumber(layer:call("get_EndFrame")) or 0
-            if ef > 1.0 and f >= ef - 2.0 then settled = true end
-        end)
-        if settled or now - (tonumber(sess.since) or 0) > 6.0 then
-            sess.rest_asked = true
-            local param, own = _br_inn_param(sess.io)
+        local lie_age = now - (tonumber(sess.since) or now)
+        if lie_age >= 12.0
+                and now >= (tonumber(sess.rest_retry_at) or 0) then
+            local param, own = _br_session_param(sess)
             if param then
+                sess.rest_asked = true
                 BR.param, BR.own = param, own
-                _br_show(sess.io)
-            elseif M.dev then
-                _st_log("bed rest: no inn settings available for this bed - no menu")
+                sess.rest_ready = true
+                _st_log("bed rest: sleeper settled; B/Interact or Backspace opens native rest")
+            else
+                sess.rest_retry_at = now + 2.0
             end
         end
     end
 
     if edge_btn and now - (tonumber(sess.since) or 0) > 1.2 then
-        -- the native abort plays its own wind-out, no staged stop needed
+        if sess.rec and sess.rec.kind == "bed" then
+            if sess.rest_ready then
+                _br_arm_native_rest(sess, now)
+            else
+                _st_log("bed rest: B/Interact arrived before the sleeper had settled")
+            end
+            return
+        end
         return _st_release("button")
     end
 end
 
+local publish_at = 0
 local function _publish()
-    _G.Interactables_dough_hybrid_lab = false
+    local now = os.clock()
+    if now - publish_at < 1.0 then return end
+    publish_at = now
 
-    _G.DD2NativeSeats = { owner = "Interactables", version = 1,
-                          prefab = M.donor or "gm80_257",
-                          chores = M.native_chores == true,
-                          beds = M.native_beds == true,
-                          t = os.clock() }
+    if M.enabled then
+        _G.DD2NativeSeats = { owner = "Interactables", version = 1,
+                              prefab = M.donor or "gm80_257",
+                              chores = M.native_chores == true,
+                              beds = M.native_beds == true,
+                              t = now }
+    else
+        _G.DD2NativeSeats = nil
+    end
 
-    _G.Interactables_stations_live = M.stations ~= false
+    _G.Interactables_stations_live = ST.any_activity_enabled()
 end
 
--- main loop
 re.on_frame(function()
     if M.master == false then
         ST.player_addr = nil
@@ -3491,23 +5035,26 @@ re.on_frame(function()
         return
     end
     pcall(_mc_toast_draw)
+    pcall(_br_progress_draw)
     _publish()
+    pcall(BR.wake_guard_tick)
+    pcall(_br_tick)
+    if BR.transition then return end
     pcall(_tick)
     pcall(_unlock_tick)
-    pcall(_native_session_tick)
     pcall(_st_frame)
-    pcall(_br_tick)
+    pcall(_interaction_cleanup_tick)
     pcall(_tl_frame)
     pcall(_carry_tick)
-    pcall(_bed_probe_tick)
     pcall(_registry_tick)
     pcall(_mc_frame)
     pcall(_pin_frame)
 end)
 
--- put everything back on script reset
 re.on_script_reset(function()
-    _G.Interactables_dough_hybrid_lab = false
+    _G.Interactables_rest_transition = false
+    EXIT_RECOVERY.status, EXIT_RECOVERY.pending_at = "not run", nil
+    _br_clear_rest_prompt()
 
     pcall(function() _tl_stop("script reset") end)
     pcall(function() _mc_stop_stir() end)
@@ -3526,13 +5073,12 @@ re.on_script_reset(function()
         end
     end)
 
-    pcall(function() _drop_all(false) end)
+    pcall(function() _drop_all(true) end)
 
     pcall(function() _restore_unlocks() end)
     pcall(_save_cfg)
 end)
 
--- the settings panel
 re.on_draw_ui(function()
     if not imgui.tree_node("Immersive Interactables") then return end
     local c
@@ -3561,7 +5107,7 @@ re.on_draw_ui(function()
     if M.master ~= false then
         imgui.text("Interact with:")
 
-        c, M.enabled = imgui.checkbox("Chairs, stools and benches", M.enabled)
+        c, M.enabled = imgui.checkbox("Seats - chairs, benches and stools", M.enabled)
         if c then
             _save_cfg()
             if not M.enabled then _drop_all(true); _restore_unlocks("seat") end
@@ -3573,21 +5119,36 @@ re.on_draw_ui(function()
             _save_cfg()
         end
 
-        c, M.stations = imgui.checkbox("Workstations - knead, smith, sweep, weave, cook and more",
-            M.stations ~= false)
-        if c then
-            _save_cfg()
-            if not M.stations then _restore_unlocks("station") end
+        M.activity_groups = M.activity_groups or {}
+        for _, group in ipairs(ST.groups) do
+            local on = M.activity_groups[group.key] ~= false
+            c, on = imgui.checkbox(group.label, on)
+            if c then
+                M.activity_groups[group.key] = on
+                ST.restore_disabled_activities()
+                _save_cfg()
+            end
         end
 
         c, M.native_chores = imgui.checkbox("Loose tools - carry brooms and pitchforks",
             M.native_chores)
         if c then
-            if not M.native_chores then _restore_unlocks("chore") end
+            if not M.native_chores then
+                _tl_stop("loose tools disabled")
+                _carry_release()
+                _restore_unlocks("chore")
+            end
             _save_cfg()
         end
 
-        imgui.text("Your DD2 Interact control uses things; Interact or BACKSPACE stops")
+        c, M.native_ambient = imgui.checkbox("Ambient actions - lean at tables",
+            M.native_ambient == true)
+        if c then
+            if not M.native_ambient then _restore_unlocks("ambient") end
+            _save_cfg()
+        end
+
+        imgui.text("Your DD2 Interact control uses things; BACKSPACE is the keyboard fallback")
         if M.native_chores and M.keep_tools ~= false then
             imgui.text("carrying a tool - click the left stick (or BACKSPACE) to put it down")
         end
@@ -3595,7 +5156,7 @@ re.on_draw_ui(function()
         if imgui.tree_node("Controls") then
             imgui.text("Keyboard controls follow your DD2 bindings; custom keys are optional.")
             c, M.follow_game_controls = imgui.checkbox(
-                "Follow DD2 Interact binding automatically", M.follow_game_controls ~= false)
+                "Follow DD2 Interact / Jump bindings automatically", M.follow_game_controls ~= false)
             if c then _save_cfg() end
 
             local function binding_row(field, label, fixed)
@@ -3610,7 +5171,8 @@ re.on_draw_ui(function()
             end
 
             binding_row("interact_bind", "Use fallback")
-            binding_row("stop_bind", "Stop / get up", "DD2 Interact")
+            binding_row("stop_bind", "Open rest menu while lying down", "DD2 B / Dash action")
+            binding_row("rest_bind", "Get up while lying down", "DD2 Jump / A")
             binding_row("drop_bind", "Put carried object down", "L3")
             imgui.text("Escape cancels key assignment.")
             local got = _capture_key()
@@ -3648,14 +5210,23 @@ re.on_draw_ui(function()
             if c then _save_cfg() end
         end
 
-        c, M.seat_y = imgui.slider_float(
-            "sitting height (raise or lower yourself on seats)",
-            M.seat_y or 0.0, -0.8, 0.8)
-        if c then _save_cfg() end
-
+        if _br_interacting() == true then
+            imgui.text("Seat height controls are locked while sitting")
+        else
+            c, M.seat_y = imgui.slider_float(
+                "sitting height (standard seats only)",
+                M.seat_y or 0.0, -0.8, 0.8)
+            if c then _drop_all(true); _save_cfg() end
+        end
+        imgui.text("Tall seat: " .. tostring(ST.tall_gate or "idle"))
         c, M.bed_rest = imgui.checkbox(
-            "ask how long to sleep once you lie down", M.bed_rest ~= false)
+            "offer the native rest menu once you lie down", M.bed_rest ~= false)
         if c then _save_cfg() end
+        if M.bed_rest ~= false then
+            c, M.bed_rest_anywhere = imgui.checkbox(
+                "Allow resting in non-home beds", M.bed_rest_anywhere ~= false)
+            if c then _save_cfg() end
+        end
 
         c, M.keep_tools = imgui.checkbox(
             "keep hold of tools when you walk away",
@@ -3668,107 +5239,33 @@ re.on_draw_ui(function()
             imgui.text("Carried-object drop: L3 plus the key selected under Controls")
         end
 
-        if M.dev and CARRY.go and CARRY.id then
-            if imgui.tree_node("Carried tool grip (live)") then
-                local key = tostring(CARRY.id)
-                M.tool_grip = M.tool_grip or {}
-                local g = M.tool_grip[key]
-                if type(g) ~= "table" then g = { 0, 0, 0, 0, 0, 0 }; M.tool_grip[key] = g end
-                imgui.text(string.format("holding %s (eq id %s)",
-                    tostring(TL.eqid[CARRY.id] or "?"), key))
-                c, g[1] = imgui.slider_float("offset X", g[1] or 0, -0.6, 0.6)
-                c, g[2] = imgui.slider_float("offset Y", g[2] or 0, -0.6, 0.6)
-                c, g[3] = imgui.slider_float("offset Z", g[3] or 0, -0.6, 0.6)
-                c, g[4] = imgui.slider_float("rotate X", g[4] or 0, -180.0, 180.0)
-                c, g[5] = imgui.slider_float("rotate Y", g[5] or 0, -180.0, 180.0)
-                c, g[6] = imgui.slider_float("rotate Z", g[6] or 0, -180.0, 180.0)
-                if imgui.button("Save this grip") then
-                    _save_cfg()
-                    _st_log(string.format("GRIP %s = { %.3f, %.3f, %.3f, %.2f, %.2f, %.2f }",
-                        tostring(TL.eqid[CARRY.id]), g[1], g[2], g[3], g[4], g[5], g[6]))
-                end
-                imgui.tree_pop()
-            end
-        end
-
-        if M.dev then
-        local ca
-        ca, M.anvil_prop = imgui.input_text(
-            "smithing workpiece (blank = empty hands)", tostring(M.anvil_prop or ""))
-        if ca then _save_cfg() end
-        imgui.text("      the item held while smithing, eqit09_001 is a sword")
-        if imgui.tree_node("Workpiece grip (adjust live while smithing)") then
-            c, M.pin_ox = imgui.slider_float("offset X (m)", M.pin_ox or 0.0, -0.5, 0.5)
-            c, M.pin_oy = imgui.slider_float("offset Y (m)", M.pin_oy or 0.0, -0.5, 0.5)
-            c, M.pin_oz = imgui.slider_float("offset Z (m)", M.pin_oz or 0.0, -0.5, 0.5)
-            c, M.pin_rx = imgui.slider_float("rotate X (deg)", M.pin_rx or 0.0, -180.0, 180.0)
-            c, M.pin_ry = imgui.slider_float("rotate Y (deg)", M.pin_ry or 0.0, -180.0, 180.0)
-            c, M.pin_rz = imgui.slider_float("rotate Z (deg)", M.pin_rz or 0.0, -180.0, 180.0)
-            if imgui.button("Reset grip") then
-                M.pin_ox, M.pin_oy, M.pin_oz = -0.059, 0.016, -0.035
-                M.pin_rx, M.pin_ry, M.pin_rz = -72.371, -24.124, 59.417
-            end
-            imgui.same_line()
-            if imgui.button("Save grip") then _save_cfg() end
-            imgui.tree_pop()
-        end
-        end
-
-        if imgui.tree_node("Workstation list (untick to turn one off)") then
-            local keys = {}
-            for k in pairs(STATIONS) do keys[#keys + 1] = k end
-            table.sort(keys)
-            for _, k in ipairs(keys) do
-                local on = not (M.st_off or {})[k]
-                c, on = imgui.checkbox(string.format("%s - %s", k, tostring(STATIONS[k].label)), on)
-                if c then
-                    M.st_off = M.st_off or {}
-                    M.st_off[k] = (not on) and true or nil
-                    if not on then
-                        for addr, r in pairs(unlocks) do
-                            if r.kind == "station" and r.prop_key == k then
-                                pcall(function()
-                                    r.point:set_field("CharacterType", r.old)
-                                    if r.old_icon ~= nil then r.point:set_field("IconType", r.old_icon) end
-                                end)
-                                unlocks[addr] = nil
+        if imgui.tree_node("Individual activities (untick to turn one off)") then
+            for _, group in ipairs(ST.groups) do
+                if imgui.tree_node(group.label .. "##activity_list_" .. group.key) then
+                    local keys = {}
+                    for k, row in pairs(STATIONS) do
+                        if row.group == group.key then keys[#keys + 1] = k end
+                    end
+                    table.sort(keys)
+                    for _, k in ipairs(keys) do
+                        local on = not (M.st_off or {})[k]
+                        c, on = imgui.checkbox(
+                            string.format("%s - %s", k, tostring(STATIONS[k].label)), on)
+                        if c then
+                            M.st_off = M.st_off or {}
+                            M.st_off[k] = (not on) and true or nil
+                            if not on then
+                                ST.restore_disabled_activities()
                             end
+                            _save_cfg()
                         end
                     end
-                    _save_cfg()
+                    imgui.tree_pop()
                 end
             end
             imgui.tree_pop()
         end
 
-        -- dev mode has no public switch, set dev true in Interactables.json to get it back
-        if M.dev then
-            c, M.dev = imgui.checkbox("show developer tools", M.dev == true)
-            if c then _save_cfg() end
-            c, M.log = imgui.checkbox("write Interactables.log", M.log)
-            if c then _save_cfg() end
-        end
-
-        if M.dev and imgui.tree_node("Research (dev only)") then
-            imgui.text("Session-only switches, never saved. Work loops entered through")
-            imgui.text("discovery have no safe native exit - BACKSPACE only.")
-            if imgui.button("Probe native cook menu (nothing is consumed)") then
-                CK.req = true
-            end
-            c, M.native_discovery = imgui.checkbox(
-                "SESSION ONLY: discover ALL Human-only world props", M.native_discovery)
-            if c and not M.native_discovery then
-                _restore_unlocks("chore")
-                if not M.native_beds then _restore_unlocks("bed") end
-            end
-            c, M.native_lethal = imgui.checkbox(
-                "SESSION ONLY: ALSO the proven-crash drum (gm10_030)", M.native_lethal)
-            if c and not M.native_lethal then _restore_unlocks("chore") end
-            imgui.text("Last native event: " .. tostring(native_last))
-            imgui.text(string.format("%d chore + %d bed point(s) changed live, %d failed writes",
-                _unlock_count("chore"), _unlock_count("bed"), stats.unlock_failed or 0))
-            imgui.tree_pop()
-        end
         imgui.tree_pop()
     end
 
