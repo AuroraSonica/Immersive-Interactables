@@ -38,6 +38,7 @@ local M = {
     drop_bind     = "backspace",
 
     stations       = true,
+    work_buffs     = true,
     activity_groups = {
         food = true,
         everyday = true,
@@ -1118,7 +1119,7 @@ end
 
 function ST.tall_visual_clear()
     local visual = ST.tall_visual
-    visual.key, visual.player_addr, visual.hip_gap_y = nil, nil, nil
+    visual.key, visual.player_addr, visual.hip_gap_y, visual.lift_since = nil, nil, nil, nil
 end
 
 function ST.tall_visual_tick()
@@ -1166,6 +1167,7 @@ function ST.tall_visual_tick()
     if visual.key ~= key or visual.player_addr ~= pa or visual.hip_gap_y == nil then
         visual.key, visual.player_addr = key, pa
         visual.hip_gap_y = (tonumber(hp.y) or 0.0) - sit.y
+        visual.lift_since = os.clock()
     end
     local blend = 0.0
     pcall(function() blend = tonumber(ik:call("get_HipAdjustBlendRate")) or 0.0 end)
@@ -1173,7 +1175,13 @@ function ST.tall_visual_tick()
         pcall(function() blend = tonumber(ik:get_field("HipAdjustBlendRate")) or 0.0 end)
     end
     blend = math.max(0.0, math.min(1.0, blend))
-    ST.tall_gate = blend > 0 and "lift active" or "tall seat: hip IK blend is 0"
+    local ramp = math.min(1.0, (os.clock() - (tonumber(visual.lift_since) or 0)) * 3.0)
+    if ramp > blend then
+        ST.tall_gate = blend > 0 and "lift active" or "lift active (own ramp)"
+        blend = ramp
+    else
+        ST.tall_gate = "lift active"
+    end
     local lift = math.max(0.0, math.min(0.50, tonumber(M.tall_seat_y) or 0.25)) * blend
     local target_y = sit.y + visual.hip_gap_y + lift
     local delta_y = target_y - (tonumber(hp.y) or target_y)
@@ -3291,6 +3299,54 @@ local function _mc_cook(entry)
     end)
 end
 
+ST.WORK_BUFFS = {
+    food      = { id = 2, toast = "Good honest kitchen work - the party feels nourished." },
+    trades    = { id = 4, toast = "Good honest craftwork - the party feels stronger." },
+    household = { id = 3, toast = "The chores are done - the party feels hardy." },
+    everyday  = { id = 3, toast = "An honest day's work - the party feels hardy." },
+    outdoors  = { id = 6, toast = "Hard work in the open air - the party feels invigorated." },
+}
+
+function ST.work_buff_tick()
+    local now = os.clock()
+    local w = ST.wb
+    if not w then w = {}; ST.wb = w end
+    local sess = ST.session
+    if sess and sess.rec and sess.rec.kind == "station" then
+        if w.id ~= sess.id then
+            w.id, w.since = sess.id, now
+            -- the dye station is its own reward; no work buff there
+            w.group = sess.key ~= "gm50_052_1"
+                and (STATIONS[sess.key] or {}).group or nil
+        end
+        return
+    end
+    if not w.id then return end
+    local dur = now - (tonumber(w.since) or now)
+    local group = w.group
+    w.id, w.since, w.group = nil, nil, nil
+    if M.work_buffs == false then return end
+    if dur < 10.0 then return end
+    if now - (tonumber(ST.wb_last) or -1e9) < 60.0 then return end
+    local buff = ST.WORK_BUFFS[group or ""]
+    if not buff then return end
+    local party = _mc_party()
+    local fed = 0
+    for _, ch in ipairs(party) do
+        pcall(function()
+            local human = ch:call("get_Human")
+            local sb = human and human:call("get_SpecialBuffManager")
+            if sb then sb:call("startBuff", buff.id); fed = fed + 1 end
+        end)
+    end
+    if fed > 0 then
+        ST.wb_last = now
+        _mc_toast(buff.toast)
+        _st_log(string.format("work buff %d granted to %d member(s) after %.0fs of %s",
+            buff.id, fed, dur, tostring(group)))
+    end
+end
+
 local function _mc_frame()
     if CAMP_STATE.is_active() then
         if MC.camp_suppressed ~= true then
@@ -3708,8 +3764,9 @@ local function _registry_tick()
 end
 
 local function _st_cam_tick()
-    if M.st_cam == false and ST.cam_base == nil then return end
-    local want = M.st_cam ~= false
+    local dye_open = rawget(_G, "InteractablesDyeUIOpen") == true
+    if M.st_cam == false and ST.cam_base == nil and not dye_open then return end
+    local want = (M.st_cam ~= false or dye_open)
         and (ST.session ~= nil or ST.pending ~= nil or (TL and TL.act ~= nil))
     local cm = sdk.get_managed_singleton("app.CameraManager")
     if not cm then return end
@@ -3725,6 +3782,7 @@ local function _st_cam_tick()
                 ST.cam_base, tonumber(M.st_cam_dist) or -1.2))
         end
         local target = (ST.cam_base or 0.0) + (tonumber(M.st_cam_dist) or -1.2)
+        if dye_open then target = (ST.cam_base or 0.0) + 1.4 end
         pcall(function()
             local cur = tonumber(cm:call("get_DistanceOffset")) or 0.0
             cm:call("set_DistanceOffset", cur + (target - cur) * math.min(1.0, dt * 3.0))
@@ -5043,12 +5101,14 @@ re.on_frame(function()
     pcall(_tick)
     pcall(_unlock_tick)
     pcall(_st_frame)
+    pcall(ST.work_buff_tick)
     pcall(_interaction_cleanup_tick)
     pcall(_tl_frame)
     pcall(_carry_tick)
     pcall(_registry_tick)
     pcall(_mc_frame)
     pcall(_pin_frame)
+    _G.Interactables_session_key = ST.session and ST.session.key or nil
 end)
 
 re.on_script_reset(function()
@@ -5235,6 +5295,10 @@ re.on_draw_ui(function()
             if M.keep_tools == false then pcall(_carry_release) end
             _save_cfg()
         end
+        c, M.work_buffs = imgui.checkbox(
+            "finishing a work session grants a hearty buff",
+            M.work_buffs ~= false)
+        if c then _save_cfg() end
         if M.keep_tools ~= false then
             imgui.text("Carried-object drop: L3 plus the key selected under Controls")
         end
