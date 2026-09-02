@@ -1247,7 +1247,22 @@ local function _sui_draw(worn)
             end
             for s, shade in ipairs(SHADES) do
                 local cx = colx[3] + 105 + (s - 1) * 42
-                local c = _abgr(col.v[1] * shade.mul, col.v[2] * shade.mul, col.v[3] * shade.mul)
+                -- swatch = the HUE getting stronger, never the raw multiplier
+                -- (x2.5 / x4 clip to white on screen; on fabric they punch
+                -- colour through darkness). Grey dyes ramp by lightness.
+                local r, g, b = col.v[1], col.v[2], col.v[3]
+                local mx, mn = math.max(r, g, b), math.min(r, g, b)
+                local sr, sg, sb
+                if mx - mn < 0.1 or mx < 0.01 then
+                    sr = math.min(1.0, r * shade.mul)
+                    sg = math.min(1.0, g * shade.mul)
+                    sb = math.min(1.0, b * shade.mul)
+                else
+                    local level = (s == 1 and 0.62) or (s == 2 and 0.82) or 1.0
+                    local k = level / mx
+                    sr, sg, sb = r * k, g * k, b * k
+                end
+                local c = _abgr(sr, sg, sb)
                 draw.filled_rect(cx, cy, 32, 26, c)
                 if not _dye_affordable(col.key, shade) then
                     draw.filled_rect(cx, cy, 32, 26, 0xA8000000)
