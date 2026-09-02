@@ -970,43 +970,6 @@ local function _sui_preview_apply()
     _G.InteractablesDyePreview = snaps
 end
 
-local function _sui_commit_go(col, shade)
-    if not _dye_consume(col.key, shade) then
-        DYE.status = "could not consume the dye bowls - nothing applied"
-        return
-    end
-    _sui_preview_revert()
-    for _, p in ipairs(_sui_targets()) do
-        _apply_dye(p.e, p.m, col.key .. " (" .. shade.key .. ")", col.v, shade.mul)
-    end
-end
-
-local function _sui_commit()
-    local col = COLORS[SUI.di]
-    local shade = SHADES[SUI.si]
-    if not (col and shade) then return end
-    if not _dye_affordable(col.key, shade) then
-        DYE.status = "not enough dye bowls for " .. col.key
-            .. (shade.key == "Vivid" and " (Vivid costs double)" or "")
-        return
-    end
-    if DYE.consume == false or not next(DYE.item_ids or {}) then
-        _sui_commit_go(col, shade)
-        return
-    end
-    local bits = {}
-    for b, n in pairs(_dye_cost(col.key, shade)) do
-        bits[#bits + 1] = n .. " " .. b .. " Dye"
-    end
-    table.sort(bits)
-    _dlg_open("Use " .. table.concat(bits, " and ") .. "?", { col = col, shade = shade })
-end
-
-local function _sui_washout()
-    _sui_preview_revert()
-    for _, p in ipairs(_sui_targets()) do _remove_dye(p.e, p.m) end
-end
-
 -- native Yes/No confirm (the proven ui010101 recipe: sticky RetVal reset via
 -- discovered field, change-from-baseline, RetVal None=0 Cancel=1 YES=2 NO=3)
 local DLG_TYPE = 14
@@ -1064,6 +1027,44 @@ local function _dlg_open(prompt, payload)
             true, 0.0)
         SUI.dlg = { opened_at = os.clock(), baseline = _dlg_pick(), payload = payload }
     end)
+end
+
+
+local function _sui_commit_go(col, shade)
+    if not _dye_consume(col.key, shade) then
+        DYE.status = "could not consume the dye bowls - nothing applied"
+        return
+    end
+    _sui_preview_revert()
+    for _, p in ipairs(_sui_targets()) do
+        _apply_dye(p.e, p.m, col.key .. " (" .. shade.key .. ")", col.v, shade.mul)
+    end
+end
+
+local function _sui_commit()
+    local col = COLORS[SUI.di]
+    local shade = SHADES[SUI.si]
+    if not (col and shade) then return end
+    if not _dye_affordable(col.key, shade) then
+        DYE.status = "not enough dye bowls for " .. col.key
+            .. (shade.key == "Vivid" and " (Vivid costs double)" or "")
+        return
+    end
+    if DYE.consume == false or not next(DYE.item_ids or {}) then
+        _sui_commit_go(col, shade)
+        return
+    end
+    local bits = {}
+    for b, n in pairs(_dye_cost(col.key, shade)) do
+        bits[#bits + 1] = n .. " " .. b .. " Dye"
+    end
+    table.sort(bits)
+    _dlg_open("Use " .. table.concat(bits, " and ") .. "?", { col = col, shade = shade })
+end
+
+local function _sui_washout()
+    _sui_preview_revert()
+    for _, p in ipairs(_sui_targets()) do _remove_dye(p.e, p.m) end
 end
 
 local function _sui_close()
