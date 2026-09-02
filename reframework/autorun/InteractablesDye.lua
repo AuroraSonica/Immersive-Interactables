@@ -1084,6 +1084,7 @@ end
 local function _sui_input(worn)
     if SUI.dlg then return end
     local now = os.clock()
+    if now < (tonumber(SUI.block_until) or 0) then return end
     local mask = _pad_mask()
     local ay = tonumber(SUI.ay) or 0
     local ax = tonumber(SUI.ax) or 0
@@ -1564,15 +1565,19 @@ re.on_application_entry("UpdateBehavior", function()
                 local p = _dlg_pick()
                 if p ~= nil and p ~= d.baseline then
                     local payload = d.payload
-                    if p == 2 then
-                        _dlg_close()
+                    -- two-button dialog: first button (Dye it) = 1, second
+                    -- (Not yet) = 2; anything else = cancelled. Field-proven
+                    -- 09-02 (the old 2=YES mapping applied on "Not yet").
+                    _dlg_close()
+                    SUI.block_until = now + 0.5   -- the same A press must not re-fire Apply
+                    if p == 1 then
                         if payload then _sui_commit_go(payload.col, payload.shade) end
-                    elseif p == 1 or p == 3 then
-                        _dlg_close()
+                    else
                         DYE.status = "kept your bowls"
                     end
                 elseif now - d.opened_at > 30.0 then
                     _dlg_close()
+                    SUI.block_until = now + 0.5
                 end
             end
         end
