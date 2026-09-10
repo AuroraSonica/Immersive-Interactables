@@ -12,7 +12,7 @@ Title Update 3.2 release. Everything below is relative to 1.0.6.
 
 ### New
 
-- **Dye equipment.** Recolour worn armour and weapons at dye stations, per material group or by whole garment and whole weapon, with a live preview on your own character, native confirmation dialogue, Wash Out, and a bowl cost per final colour. Dye profiles are saved and re-applied whenever the game rebuilds your equipment. Paragliders from Aurora's Paragliders can be dyed too when that mod is installed.
+- **Dye equipment.** Recolour worn armour and weapons at dye stations, per material group or by whole garment and whole weapon, with a live preview on a mannequin copy of your character, native confirmation dialogue, Wash Out, and a bowl cost per final colour. Dye profiles are saved and re-applied whenever the game rebuilds your equipment. Paragliders from Aurora's Paragliders can be dyed too when that mod is installed.
 - **Temper weapons at anvils.** Forty-five seconds of work reveals a coordinated finish (Silver, Fulgin, Copper or Gold ore treatments) on a display copy of your main weapon, with a compare view, an ore cost charged only on completion and a 30-minute +5% weapon damage effect. Finishes persist. Works with every weapon family, including bows and staves.
 - **Change vocation at weapon racks.** Approach a weapon rack or barrel in a town and open the game's own Vocation Guild screen. Sixty-one rack locations across fourteen areas are mapped; you can register more from the REFramework panel.
 - **Throne.** The Audience Chamber throne can be sat on with the native seat.
@@ -47,7 +47,6 @@ Title Update 3.2 release. Everything below is relative to 1.0.6.
 
 ### Known issues
 
-- The dye preview is your own character; there is no separate mannequin.
 - A few workstations animate empty-handed by design.
 - Rest from a home bed's own menu can decline on some beds; get up and use the bed's native prompt.
 - Bar-height stools can still clip; use the tall stool lift slider under Advanced until a tuned default ships.

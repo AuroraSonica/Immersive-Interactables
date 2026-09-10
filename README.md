@@ -11,7 +11,7 @@ Built for Title Update 3.2.
 - **Work rewards** - 45 seconds of active work grants the party the matching camp-meal effect. Hauling beams, log bundles or a bucket counts while you move; standing still pauses the timer.
 - **Carry villager tools and scene props** - loose brooms, buckets, pitchforks, hatchets, log bundles and wooden beams stay with you while walking and running. L3 or the configured Drop key puts an object down.
 - **Use working tools** - brooms Sweep, hoes Till, pitchforks Pitch Hay, and the hatchet works the chopping block.
-- **Dye equipment** - recolour worn armour and weapons at dye stations, per material group or whole garment, with a live preview on your own character and a native confirmation. Dyes persist and re-apply whenever the game rebuilds your gear. Paragliders from Aurora's Paragliders can be dyed too.
+- **Dye equipment** - recolour worn armour and weapons at dye stations, per material group or whole garment, with a live preview on a mannequin copy of your character and a native confirmation. Dyes persist and re-apply whenever the game rebuilds your gear. Paragliders from Aurora's Paragliders can be dyed too.
 - **Temper weapons** - 45 seconds at an anvil reveals a Silver, Fulgin, Copper or Gold ore finish on a display copy of your main weapon, charged only on completion, with a 30-minute weapon damage bonus. Finishes persist.
 - **Change vocation at weapon racks** - approach a town weapon rack or barrel and open the game's own Vocation Guild screen. You can register more racks from the REFramework panel.
 - **Sleep and actually rest** - lie down in supported beds; A or Space gets up, B or Shift opens Rest. Home beds keep their full native rest flow; optional non-home rest uses the same native menu.
@@ -42,7 +42,6 @@ Settings live in the REFramework menu under **Immersive Interactables**. The Adv
 
 ## Known issues
 
-- The dye preview is your own character; there is no separate mannequin.
 - A few workstations animate empty-handed - that is how the game authored them.
 - Rest from a home bed's own menu can decline on some beds; get up and use the bed's native prompt.
 - Bar-height stools can still clip; use the tall stool lift slider under Advanced until a tuned default ships.
