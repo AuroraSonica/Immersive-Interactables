@@ -2600,51 +2600,7 @@ pcall(function()
         end
     end, function(retval) return retval end)
 end)
-CARRY.chain = { broken = 0, hook = "not installed" }
-function CARRY.work_is_players(work)
-    if work:call("get_IsInteractedByPlayer") == true then return true end
-    local mgr = sdk.get_managed_singleton("app.InteractManager")
-    local ch = _player()
-    if not (mgr and ch) then return false end
-    local addr = _addr(work)
-    local function owns(point)
-        local obj = point and point:get_field("Object")
-        local works = obj and obj:get_field("Works")
-        local n = works and tonumber(works:call("get_Count")) or 0
-        for i = 0, math.min(n, 16) - 1 do
-            local w = works:call("get_Item", i)
-            if w and _addr(w) == addr then return true end
-        end
-        return false
-    end
-    local active = mgr:call("getActiveInteract", ch)
-    if active and owns(active:get_field("Point")) then return true end
-    return owns(mgr:get_field("HighestPriorityObjectForPlayer"))
-end
-pcall(function()
-    local method = ST.compat32.method("app.InteractiveObjectWorkForHold", "isContinueInteract", {})
-    sdk.hook(method, function(args)
-        CARRY.chain_break = false
-        if M.master == false or M.keep_tools == false or M.native_chores ~= true then return end
-        local ok, mine = pcall(function()
-            local work = sdk.to_managed_object(args[2])
-            return work ~= nil and CARRY.work_is_players(work)
-        end)
-        CARRY.chain_break = ok and mine == true
-    end, function(retval)
-        if not CARRY.chain_break then return retval end
-        CARRY.chain_break = false
-        CARRY.chain.broken = CARRY.chain.broken + 1
-        if CARRY.chain.broken == 1 then
-            _st_log("carry: player hold chain suppressed (WorkForHold.isContinueInteract -> false)")
-        end
-        return sdk.to_ptr(0)
-    end)
-    CARRY.chain.hook = "installed"
-end)
-if CARRY.chain.hook ~= "installed" then
-    _st_log("carry: WorkForHold chain hook NOT installed - beams will still auto-return")
-end
+CARRY.chain = { broken = 0, hook = "withdrawn" }
 CARRY.chain.calls = { cancel = 0, continue_ = 0, is_continue = 0, set_flag = 0 }
 CARRY.chain_ids = { [42] = true, [51] = true }
 function CARRY.chain_player_carrying(ch, name)
@@ -2702,27 +2658,6 @@ for _, name in ipairs({ "forceReturnEquipItem", "returnEquipItem" }) do
     end)
     if not ok_hook then _st_log("carry: holder hook " .. name .. " NOT installed: " .. tostring(hook_err)) end
 end
-ST.jump_inject_until = 0
-pcall(function()
-    for _, name in ipairs({ "isButtonTrigger", "isButtonOn" }) do
-        local method = ST.compat32.method("app.UserInput", name, { "System.UInt64" })
-        sdk.hook(method, function(args)
-            ST.jump_inject_hit = false
-            if os.clock() >= ST.jump_inject_until then return end
-            pcall(function()
-                local flag = NA.flags and ((NA.flags.Jump or 0) | (NA.flags.GimmickCancel or 0))
-                if not flag or flag == 0 or (sdk.to_int64(args[3]) & flag) == 0 then return end
-                local ch = _player()
-                local input = ch and ch:call("get_Input")
-                if input and sdk.to_int64(args[2]) == input:get_address() then ST.jump_inject_hit = true end
-            end)
-        end, function(retval)
-            if ST.jump_inject_hit then ST.jump_inject_hit = false; return sdk.to_ptr(1) end
-            return retval
-        end)
-    end
-    ST.jump_inject_hook = "installed"
-end)
 function ST.bed_exit_pump()
     if ST.bed_want_end and os.clock() - (tonumber(ST.bed_want_at) or 0) < 2.0 then
         ST.bed_want_end = false
@@ -2758,39 +2693,6 @@ pcall(function()
         return retval
     end)
     ST.bed_exit_hook = "installed"
-end)
-pcall(function()
-    local method = ST.compat32.method("app.InteractiveObjectWorkForHold", "isContinueInteract", {})
-    sdk.hook(method, function(args)
-        local c = CARRY.chain.calls
-        c.is_continue = c.is_continue + 1
-        if c.is_continue > 6 then return end
-        pcall(function()
-            local work = sdk.to_managed_object(args[2])
-            local byp = work and work:call("get_IsInteractedByPlayer")
-            local any = work and work:call("get_IsInteracted")
-            local mine = work and CARRY.work_is_players(work)
-            _st_log(string.format("carry chain diag: isContinueInteract #%d byPlayer=%s interacted=%s gate=%s",
-                c.is_continue, tostring(byp), tostring(any), tostring(mine)))
-        end)
-    end, function(retval) return retval end)
-end)
-pcall(function()
-    local method = ST.compat32.method("app.Human", "set_IsContinueMultipleInteract", { "System.Boolean" })
-    sdk.hook(method, function(args)
-        local c = CARRY.chain.calls
-        c.set_flag = c.set_flag + 1
-        if c.set_flag > 8 then return end
-        pcall(function()
-            local human = sdk.to_managed_object(args[2])
-            local ch = human and human:call("get_Chara")
-            local player = _player()
-            local mine = ch and player and _addr(ch) == _addr(player)
-            local value = (sdk.to_int64(args[3]) & 0xFF) ~= 0
-            _st_log(string.format("carry chain diag: Human.IsContinueMultipleInteract=%s player=%s #%d",
-                tostring(value), tostring(mine), c.set_flag))
-        end)
-    end, function(retval) return retval end)
 end)
 local CARRY_OWNED_IDS = {}
 local CARRY_PFBS = {}
@@ -2869,19 +2771,6 @@ local function _carry_owned_present(holder)
     end
     return ok and accepted
 end
-re.on_pre_application_entry("UpdateBehavior", function()
-    if os.clock() >= (ST.jump_inject_until or 0) or not NA.flags then return end
-    pcall(function()
-        local ch = _player()
-        local input = ch and ch:call("get_Input")
-        if not input then return end
-        local bits = (NA.flags.Jump or 0) | (NA.flags.GimmickCancel or 0)
-        for _, f in ipairs({ "ButtonTriggerFlags", "ButtonOnFlags" }) do
-            local cur = sdk.to_int64(input:get_field(f)) or 0
-            input:set_field(f, cur | bits)
-        end
-    end)
-end)
 re.on_application_entry("UpdateBehavior", function()
     if M.master == false then return end
     if not CARRY_PREFETCHED then
@@ -5695,8 +5584,6 @@ local function _st_frame()
             .. " (requested=" .. tostring(ok and requested) .. ")")
     end
     if edge_jump and sess.rec and sess.rec.kind == "bed" then
-        if ST.jump_inject_hook == "installed" and not NA.flags then pcall(_native_action_down, "Jump") end
-        ST.jump_inject_until = now + 0.2
         ST.bed_getup_at = now
         ST.bed_want_end, ST.bed_want_at = true, now
         _st_log("bed get-up: keyboard exit queued for the manager update (pad A trace 01:16 = InteractManager.cancelInteract)")

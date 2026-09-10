@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1
+
+- Removed three global hooks that 1.1.0 installed on the game's input queries and hold-interaction chain. They were left over from the keyboard bed-exit investigation and had no feature behind them once the real exit route was found. If 1.1.0 interfered with talking to NPCs or pawns on your setup, this is the build to try first.
+- The mod never requires REFramework's Content Editor; it is safe to disable that if another mod installed it.
+
 ## 1.1.0
 
 Title Update 3.2 release. Everything below is relative to 1.0.6.
