@@ -16,22 +16,7 @@ function C.anvil_gate(q, now, s)
     q.last_sample=now
     return now-q.stable_at>=0.5 and "ready" or "wait"
 end
-function C.record_event(message)
-    if not (message:find("tool ", 1, true) or message:find("bed ", 1, true)
-            or message:find("anvil:", 1, true) or message:find("work ", 1, true)
-            or message:find("menu state", 1, true)
-            or message:find("release:", 1, true) or message:find("exit", 1, true)
-            or message:find("update failed", 1, true) or message:find("throne", 1, true)
-            or message:find("carry", 1, true) or message:find("chain", 1, true)) then return end
-    local path = "ImmersiveInteractables_TU32_events.json"
-    if not C.events then
-        local ok, saved = pcall(json.load_file, path)
-        C.events = ok and type(saved) == "table" and saved or {}
-    end
-    C.events[#C.events + 1] = { time = os.date("%Y-%m-%d %H:%M:%S"), message = message }
-    while #C.events > 100 do table.remove(C.events, 1) end
-    json.dump_file(path, C.events)
-end
+function C.record_event() end
 function C.wrap_text(message, limit)
     local lines, line = {}, ""
     for word in tostring(message):gmatch("%S+") do

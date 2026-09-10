@@ -1,3 +1,4 @@
+local log = { info = function() end, debug = function() end, warn = function() end, error = function() end }
 local CFG = "ImmersiveInteractables/dye_profiles.json"
 local Compat32 = require("II.Compat32")
 local preview_probe_ok, PreviewProbe32 = pcall(require, "II.MannequinPreflight32")

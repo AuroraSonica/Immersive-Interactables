@@ -61,15 +61,8 @@ local M = {
 }
 local CFG  = "Interactables.json"
 local CATP = "Interactables/catalog.json"
-local function _log(m)
-    m = tostring(m)
-    if _G.__II_dl ~= m then _G.__II_dl = m; pcall(function() log.info("[II-DIAG] " .. m) end) end
-end
-local function _logf(...)
-    local ok, m = pcall(string.format, ...)
-    if not ok then return end
-    if _G.__II_dl ~= m then _G.__II_dl = m; pcall(function() log.info("[II-DIAG] " .. m) end) end
-end
+local function _log() end
+local function _logf() end
 local function _get_active_interact(mgr, ch)
     if not mgr then return nil end
     if _G.__II_gai == nil then
@@ -1705,14 +1698,7 @@ STATIONS.gm50_045_00.group = "trades"
 ST.prev, ST.kill_prev, ST.jump_prev, ST.session, ST.pending, ST.at =
     false, false, false, nil, nil, 0
 ST.status = "idle - the game offers its own prompt at each unlocked station"
-function _st_log(m)
-    m = tostring(m)
-    if _G.__II_dl ~= m then
-        _G.__II_dl = m
-        pcall(function() log.info("[II-DIAG] " .. m) end)
-        pcall(ST.compat32.record_event, m)
-    end
-end
+function _st_log() end
 local function _st_motion()
     local go = _char_go(_player())
     local m = nil
@@ -3255,7 +3241,7 @@ local function _carry_tick()
         CARRY.motion_id = motion_id or CARRY.motion_id
         if _G.__II_caplog ~= tostring(id) then
             _G.__II_caplog = tostring(id)
-            pcall(function() log.info(string.format(
+            pcall(function() _st_log(string.format(
                 "[II-DIAG] capture id=%s: equip_go=%s source_obj=%s constraint=%s nm=%s",
                 tostring(id), tostring(_valid(equip_go)), tostring(_managed(source_obj)),
                 tostring(source_constraint ~= nil), tostring(nm))) end)
@@ -5174,7 +5160,7 @@ local function _install_inn_hook()
         sdk.hook(m,
             function(args)
                 pcall(function()
-                    log.info("[II-DIAG] NATIVE FacilityManager.startInn CALLED (home-bed sleep)")
+                    _st_log("[II-DIAG] NATIVE FacilityManager.startInn CALLED (home-bed sleep)")
                     for i = 2, 7 do
                         local a = args[i]
                         local desc = tostring(a)
@@ -5186,21 +5172,21 @@ local function _install_inn_hook()
                                 end
                             end
                         end)
-                        log.info("  startInn arg" .. i .. " = " .. desc)
+                        _st_log("  startInn arg" .. i .. " = " .. desc)
                     end
                     pcall(function()
                         local ip = sdk.to_managed_object(args[5])
                         if ip and ip.add_ref then
                             _G.__II_innawake = ip:add_ref()
                             local td = ip:get_type_definition()
-                            log.info("[II-DIAG] captured InnAwakeParam type=" ..
+                            _st_log("[II-DIAG] captured InnAwakeParam type=" ..
                                 tostring(td and td:get_full_name()))
                             if td then
                                 for _, f in ipairs(td:get_fields() or {}) do
                                     local nm = tostring(f:get_name())
                                     local val = "?"
                                     pcall(function() val = tostring(ip:get_field(nm)) end)
-                                    log.info("    InnAwakeParam." .. nm .. " = " .. val)
+                                    _st_log("    InnAwakeParam." .. nm .. " = " .. val)
                                 end
                             end
                         end
@@ -5208,7 +5194,7 @@ local function _install_inn_hook()
                 end)
             end,
             function(ret) return ret end)
-        log.info("[II-DIAG] startInn hook installed (waiting for a home-bed sleep)")
+        _st_log("[II-DIAG] startInn hook installed (waiting for a home-bed sleep)")
     end)
 end
 local function _dump_catalogs()
@@ -5217,9 +5203,9 @@ local function _dump_catalogs()
     pcall(function()
         local gm = sdk.get_managed_singleton("app.GenerateManager")
         local ctrl = gm and gm:get_field("_CatalogCtrl")
-        if not ctrl then log.info("[II-DIAG] catalogs: _CatalogCtrl nil") return end
+        if not ctrl then _st_log("[II-DIAG] catalogs: _CatalogCtrl nil") return end
         local td = ctrl:get_type_definition()
-        log.info("[II-DIAG] catalogs: _CatalogCtrl type=" .. tostring(td and td:get_full_name()))
+        _st_log("[II-DIAG] catalogs: _CatalogCtrl type=" .. tostring(td and td:get_full_name()))
         for _, f in ipairs(td and td:get_fields() or {}) do
             local nm = tostring(f:get_name())
             local ty = "?"
@@ -5230,7 +5216,7 @@ local function _dump_catalogs()
                 local dict = cat and cat:get_field("<MergedCatalog>k__BackingField")
                 if dict then cnt = tostring(dict:call("get_Count")) end
             end)
-            log.info("[II-DIAG]   catalog field " .. nm .. " : " .. ty .. "  merged=" .. cnt)
+            _st_log("[II-DIAG]   catalog field " .. nm .. " : " .. ty .. "  merged=" .. cnt)
         end
     end)
 end
@@ -5274,21 +5260,21 @@ local function _install_interact_end_probe()
                                             local ok1, r1 = pcall(function()
                                                 return _G.__II_endfs:call(io, pt, nil)
                                             end)
-                                            log.info("[II-DIAG] GETUP: io.endInteractForSystem(" .. pt
+                                            _st_log("[II-DIAG] GETUP: io.endInteractForSystem(" .. pt
                                                 .. ", nil) -> ok=" .. tostring(ok1) .. " ret=" .. tostring(r1))
                                         else
-                                            log.info("[II-DIAG] GETUP: no endInteractForSystem/io available")
+                                            _st_log("[II-DIAG] GETUP: no endInteractForSystem/io available")
                                         end
                                         local mgr = sdk.get_managed_singleton("app.InteractManager")
                                         local ok, r = pcall(function() return _G.__II_endm:call(mgr, nil) end)
-                                        log.info("[II-DIAG] GETUP: mgr.endInteract(nil) -> ok=" .. tostring(ok)
+                                        _st_log("[II-DIAG] GETUP: mgr.endInteract(nil) -> ok=" .. tostring(ok)
                                             .. " ret=" .. tostring(r))
                                     end)
                                     BR.want_end_at = nil
                                 end
                                 return ret
                             end)
-                        log.info("[Interactables] keyboard bed-exit bridge hooked " .. label)
+                        _st_log("[Interactables] keyboard bed-exit bridge hooked " .. label)
                     end) end
                 end
             end
@@ -5677,12 +5663,12 @@ local function _st_frame()
                 local nn = fsm and tostring(fsm:call("getCurrentNodeName", 0))
                 if nn and _G.__II_fsmnode ~= nn then
                     _G.__II_fsmnode = nn
-                    pcall(function() log.info("[II-DIAG] bed FSM node: '" .. nn .. "'") end)
+                    pcall(function() _st_log("[II-DIAG] bed FSM node: '" .. nn .. "'") end)
                 end
                 local an = _player_action_name(_player(), 0)
                 if an and _G.__II_actname ~= tostring(an) then
                     _G.__II_actname = tostring(an)
-                    pcall(function() log.info("[II-DIAG] bed action: '" .. tostring(an) .. "'") end)
+                    pcall(function() _st_log("[II-DIAG] bed action: '" .. tostring(an) .. "'") end)
                 end
             end)
         end
