@@ -45,6 +45,7 @@ Settings live in the REFramework menu under **Immersive Interactables**. The Adv
 - The dye preview is your own character; there is no separate mannequin.
 - A few workstations animate empty-handed - that is how the game authored them.
 - Rest from a home bed's own menu can decline on some beds; get up and use the bed's native prompt.
+- Bar-height stools can still clip; use the tall stool lift slider under Advanced until a tuned default ships.
 
 ## Credits
 

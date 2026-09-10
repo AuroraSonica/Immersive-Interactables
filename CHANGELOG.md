@@ -50,6 +50,7 @@ Title Update 3.2 release. Everything below is relative to 1.0.6.
 - The dye preview is your own character; there is no separate mannequin.
 - A few workstations animate empty-handed by design.
 - Rest from a home bed's own menu can decline on some beds; get up and use the bed's native prompt.
+- Bar-height stools can still clip; use the tall stool lift slider under Advanced until a tuned default ships.
 
 ## 1.0.3 to 1.0.6
 
