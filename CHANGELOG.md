@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.4
+
+- **Town tools can be picked up again.** Hoes, hatchets, pitchforks and other loose tools authored as NPC work props (most of the ones leaning against walls in towns) played the put-down animation and never left the ground. The game only builds the hand-held copy of those tools when an NPC borrows them; the player had no such path, so the pickable had nothing to hand over and fell back to its end action. The mod now asks the game to build that copy when you approach or target such a tool. Tools at your own home, brooms and buckets were never affected. Thanks to everyone who reported it.
+- No other changes. Rest, seats, dye, temper, vocation and cooking are as in 1.1.3.
+
+
 ## 1.1.3
 
 Note on numbering: the 1.1.1 fix was uploaded to Nexus as 1.1.2, so this build is 1.1.3 everywhere.
