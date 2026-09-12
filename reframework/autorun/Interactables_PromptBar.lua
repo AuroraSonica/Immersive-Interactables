@@ -178,15 +178,48 @@ pcall(function()
     local parse = sdk.find_type_definition("System.Guid"):get_method("Parse(System.String)")
     world.guid = parse and parse:call(nil, WORLD_GUID_TEXT)
 end)
+if not world.guid then
+    pcall(function()
+        local td = sdk.find_type_definition("System.Guid")
+        local vt = ValueType.new(td)
+        vt:write_qword(0, 0x4dd2202617a15b10)
+        vt:write_qword(8, 0x010000000000119a)
+        local chk = tostring(vt:call("ToString") or ""):lower()
+        if chk == WORLD_GUID_TEXT then
+            world.guid = vt
+            _log("world-prompt Guid minted as ValueType (Guid.Parse returned nil on this build)")
+        else
+            _log("world-prompt Guid mint FAILED: ToString gave '" .. chk .. "'")
+        end
+    end)
+end
+if not world.guid then
+    _log("world prompt guid unavailable (parse nil and mint failed); native world prompt disabled")
+end
+local WORLD_GUID_Q1 = 0x4dd2202617a15b10
+local WORLD_GUID_Q2 = 0x010000000000119a
+world.hot_until = -1
+pcall(function()
+    if world.guid and world.guid.get_address then
+        local a = world.guid:get_address()
+        local q1, q2 = read_qword(a), read_qword(a + 8)
+        if q1 ~= WORLD_GUID_Q1 or q2 ~= WORLD_GUID_Q2 then
+            _log(string.format("world guid qword self-check MISMATCH: %x %x (hook will never match)", q1, q2))
+        end
+    end
+end)
 _G.InteractablesPromptMessagePre = function(args)
+    if os.clock() >= world.hot_until then return end
     local hit = false
     pcall(function()
-        local g = sdk.to_valuetype(args[2], "System.Guid")
-        hit = g and tostring(g:ToString()):lower() == WORLD_GUID_TEXT
+        local a = sdk.to_int64(args[2])
+        if a == nil or a == 0 then return end
+        hit = read_qword(a) == WORLD_GUID_Q1 and read_qword(a + 8) == WORLD_GUID_Q2
     end)
-    thread.get_hook_storage().iris_world_prompt = hit
+    if hit then thread.get_hook_storage().iris_world_prompt = true end
 end
 _G.InteractablesPromptMessagePost = function(retval)
+    if os.clock() >= world.hot_until then return retval end
     local out = retval
     pcall(function()
         if thread.get_hook_storage().iris_world_prompt ~= true then return end
@@ -242,6 +275,7 @@ local function _world_prompt(owner, entry)
         local req = td and td:get_method(
             "reqDraw(via.vec3, System.Guid, via.GameObject, System.Boolean)")
         if not req then error("ui020701.reqDraw unavailable") end
+        world.hot_until = os.clock() + 2.0
         req:call(guide, entry.pos, world.guid, go, false)
         world.req_ok = true
         local txt = guide:get_field("TxtInteract")

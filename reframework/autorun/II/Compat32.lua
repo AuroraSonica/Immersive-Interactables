@@ -120,10 +120,11 @@ function C.dialog_choice(gm)
     return nil
 end
 function C.cook_page(avail, page)
-    local pages = math.max(1, math.ceil(#avail / 3))
+    local per = (#avail <= 3) and 3 or 2
+    local pages = math.max(1, math.ceil(#avail / per))
     page = ((page or 1) - 1) % pages + 1
     local opts, labels = {}, {}
-    for i = (page - 1) * 3 + 1, math.min(page * 3, #avail) do
+    for i = (page - 1) * per + 1, math.min(page * per, #avail) do
         local it = avail[i]
         opts[#opts + 1] = it
         labels[#labels + 1] = string.format("%s (%d)", it.m.name, it.count)
@@ -132,7 +133,7 @@ function C.cook_page(avail, page)
         opts[#opts + 1] = { page = page % pages + 1 }
         labels[#labels + 1] = page < pages and "More..." or "First page..."
     end
-    if #labels == 0 then labels[1] = "Cancel" end
+    labels[#labels + 1] = "Cancel"
     return opts, labels, page
 end
 function C.current_weapons(equip)

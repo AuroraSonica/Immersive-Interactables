@@ -42,6 +42,8 @@ local workpiece_exit=require("II.WorkpieceExit32").new()
 local workpiece_display_token,workpiece_exiting,workpiece_wait_since
 local TEMPER
 local DYE = {
+    cost_mode = "gold",
+    gold_per_item = 1000,
     preview_enabled = true,
     lock_vertical_camera = true,
     records = {},
@@ -89,6 +91,12 @@ local function _load()
             if type(t.records) == "table" then DYE.records = t.records end
             if type(t.dye_items) == "table" then DYE.item_ids = t.dye_items end
             if t.consume ~= nil then DYE.consume = t.consume end
+            if t.cost_mode == "gold" or t.cost_mode == "bowls" or t.cost_mode == "free" then
+                DYE.cost_mode = t.cost_mode
+            end
+            if tonumber(t.gold_per_item) and tonumber(t.gold_per_item) >= 0 then
+                DYE.gold_per_item = math.floor(tonumber(t.gold_per_item))
+            end
             if type(t.preview_enabled)=="boolean" then DYE.preview_enabled=t.preview_enabled end
             if type(t.lock_vertical_camera)=="boolean" then DYE.lock_vertical_camera=t.lock_vertical_camera end
         end
@@ -98,7 +106,8 @@ local function _save()
     DYE.record_index=nil
     if DYE.batch_saving then DYE.dirty=true; return end
     local ok,result=pcall(function() return json.dump_file(CFG, { version = 1, records = DYE.records,
-        dye_items = DYE.item_ids, consume = DYE.consume, preview_enabled=DYE.preview_enabled,
+        dye_items = DYE.item_ids, consume = DYE.consume, cost_mode = DYE.cost_mode,
+        gold_per_item = DYE.gold_per_item, preview_enabled=DYE.preview_enabled,
         lock_vertical_camera=DYE.lock_vertical_camera }) end)
     DYE.dirty = not ok or result==false
     return not DYE.dirty
@@ -649,9 +658,17 @@ re.on_draw_ui(function()
     c, DYE.strength = imgui.slider_float(
         "dye strength (1 = natural, crank it to brighten dark fabric)",
         tonumber(DYE.strength) or 1.0, 1.0, 6.0)
-    c, DYE.consume = imgui.checkbox(
-        "station dyeing costs dye bowls", DYE.consume ~= false)
-    if c then _save() end
+    local modes = { "gold", "bowls", "free" }
+    local mode_i = 1
+    for i, m in ipairs(modes) do if DYE.cost_mode == m then mode_i = i end end
+    c, mode_i = imgui.combo("station dyeing cost", mode_i,
+        { "gold (default)", "dye bowls (vanilla has ~1 of each)", "free" })
+    if c then DYE.cost_mode = modes[mode_i]; DYE.consume = (DYE.cost_mode ~= "free"); _save() end
+    if DYE.cost_mode == "gold" then
+        c, DYE.gold_per_item = imgui.slider_int(
+            "gold per equipment piece (any number of colours)", tonumber(DYE.gold_per_item) or 1000, 0, 10000)
+        if c then _save() end
+    end
     local worn = _worn(os.clock())
     if #worn == 0 then
         imgui.text("no dyeable equipment found yet - move around a moment and reopen")
@@ -899,8 +916,46 @@ local function _dye_cost(color_key, shade)
     for _, b in ipairs(recipe) do cost[b] = (cost[b] or 0) + mult end
     return cost
 end
+local function _gold()
+    local g = nil
+    pcall(function()
+        local im = sdk.get_managed_singleton("app.ItemManager")
+        g = im and tonumber(im:get_field("_Version"))
+    end)
+    return g
+end
+local function _gold_items(rows)
+    local seen, n = {}, 0
+    for _, r in ipairs(rows or {}) do
+        local k = r.choice and r.choice.item
+        if k ~= nil and not seen[k] then seen[k] = true; n = n + 1 end
+    end
+    return n
+end
+local function _gold_price(rows)
+    return _gold_items(rows) * (tonumber(DYE.gold_per_item) or 1000)
+end
+local function _try_pay_gold(amount)
+    if amount <= 0 then return true end
+    local paid = false
+    pcall(function()
+        local im = sdk.get_managed_singleton("app.ItemManager")
+        if not im then return end
+        local cur = tonumber(im:get_field("_Version"))
+        if cur == nil then return end
+        if cur < amount then paid = "poor"; return end
+        local ok = pcall(function() im:set_field("_Version", cur - amount) end)
+        if ok and tonumber(im:get_field("_Version")) == cur - amount then paid = true end
+    end)
+    return paid
+end
 local function _dye_affordable(color_key, shade)
-    if DYE.consume == false then return true end
+    if DYE.cost_mode == "free" or DYE.consume == false then return true end
+    if DYE.cost_mode == "gold" then
+        local g = _gold()
+        if g == nil then return true end
+        return g >= (tonumber(DYE.gold_per_item) or 1000)
+    end
     local ids = DYE.item_ids or {}
     local counts = _dye_counts()
     for b, n in pairs(_dye_cost(color_key, shade)) do
@@ -910,7 +965,8 @@ local function _dye_affordable(color_key, shade)
     return true
 end
 local function _dye_consume(color_key, shade)
-    if DYE.consume == false then return true end
+    if DYE.cost_mode == "free" or DYE.consume == false then return true end
+    if DYE.cost_mode == "gold" then return _try_pay_gold(tonumber(DYE.gold_per_item) or 1000) == true end
     local ids = DYE.item_ids or {}
     local im = sdk.get_managed_singleton("app.ItemManager")
     local ch = _player_ch()
@@ -1224,7 +1280,12 @@ local function _batch_ready()
         if not _read(r.part.e.mesh,r.part.m.index,r.part.m.var) then return nil,"Equipment unavailable; nothing charged." end
     end
     local cost=DyePlan32.cost(rows,_dye_cost)
-    if DYE.consume~=false then
+    if DYE.cost_mode=="gold" then
+        local g=_gold()
+        if g==nil then return nil,"Wallet unreadable; nothing charged." end
+        local price=_gold_price(rows)
+        if g<price then return nil,"Not enough gold (need "..price.." G, have "..g.." G)." end
+    elseif DYE.cost_mode~="free" and DYE.consume~=false then
         DYE.counts_at=nil; DYE.counts=nil
         local counts=_dye_counts()
         for b,n in pairs(cost) do
@@ -1238,7 +1299,17 @@ local function _sui_commit_go()
     local rows,cost=_batch_ready()
     if not rows then DYE.status=cost; return end
     local group_count=DyePlan32.group_count(SUI.plan)
-    if DYE.consume~=false then
+    if DYE.cost_mode=="gold" then
+        local price=_gold_price(rows)
+        local paid=_try_pay_gold(price)
+        if paid~=true then
+            SUI.batch_failed=(paid~="poor")
+            DYE.status=(paid=="poor") and ("Not enough gold (need "..price.." G).")
+                or "Payment unconfirmed; nothing applied. Close dyeing."
+            if paid~="poor" then pcall(function() log.error("[DyeBatch] gold write unconfirmed") end) end
+            return
+        end
+    elseif DYE.cost_mode~="free" and DYE.consume~=false then
         local ok,err=pcall(function()
             local im=assert(sdk.get_managed_singleton("app.ItemManager"))
             local ch=assert(_player_ch())
@@ -1293,7 +1364,12 @@ local function _sui_commit()
     local rows,cost=_batch_ready()
     if not rows then DYE.status=cost; SUI.confirm={kind='notice',text=cost}; return end
     local bits={}
-    if DYE.consume~=false then
+    if DYE.cost_mode=="gold" then
+        local n=_gold_items(rows)
+        SUI.confirm={text="Pay ".._gold_price(rows).." G to dye "..n..(n==1 and " piece?" or " pieces?")}
+        SUI.block_until=os.clock()+0.3
+        return
+    elseif DYE.cost_mode~="free" and DYE.consume~=false then
         for b,n in pairs(cost) do bits[#bits+1]=n.." "..b end
         table.sort(bits)
     end
@@ -1522,7 +1598,14 @@ local function _sui_draw(worn)
     local pending=DyePlan32.group_count(SUI.plan)
     local fy=Y+H-112
     if SUI.col==4 then draw.filled_rect(X+12,fy-3,420,30,C_SELBG) end
-    draw.text((SUI.col==4 and "> " or "").."Confirm and Dye ("..pending.." groups)",X+16,fy,C_EDGE)
+    local confirm_label="Confirm and Dye ("..pending.." groups)"
+    if DYE.cost_mode=="gold" then
+        local ok_rows,rows=pcall(DyePlan32.resolve,SUI.plan,SUI.G or {})
+        if not (ok_rows and type(rows)=="table") then rows={} end
+        local n=_gold_items(rows)
+        confirm_label="Confirm and Dye ("..pending.." groups, "..n..(n==1 and " piece" or " pieces")..")  ".._gold_price(rows).." G"
+    end
+    draw.text((SUI.col==4 and "> " or "")..confirm_label,X+16,fy,C_EDGE)
     draw.text("A: select   Down past any list / Tab: confirm",X+16,fy+28,C_DIM)
     local status=tostring(DYE.status or "")
     if #status>88 then status=status:sub(1,85).."..." end
@@ -1558,7 +1641,8 @@ local function _sui_draw(worn)
                 end
             end
             local label = col.key
-            if DYE.consume ~= false and next(DYE.item_ids or {}) then
+            if DYE.cost_mode == "gold" then
+            elseif DYE.cost_mode ~= "free" and DYE.consume ~= false and next(DYE.item_ids or {}) then
                 local n = nil
                 for b, need in pairs(_dye_cost(col.key, nil)) do
                     local have = math.floor((counts[b] or 0) / need)

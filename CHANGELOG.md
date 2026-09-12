@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.3
+
+Note on numbering: the 1.1.1 fix was uploaded to Nexus as 1.1.2, so this build is 1.1.3 everywhere.
+
+- **Dyeing now costs gold, not dye bowls.** A user pointed out that the game only ever gives you one of each dye bowl, so the bowl cost meant you could dye about once per playthrough. Station dyeing now charges a flat 1000 gold per equipment piece, however many colours or regions you change on it. The Confirm line shows pieces and total, and the confirmation dialogue repeats it. Settings: "station dyeing cost" (gold, dye bowls, or free) and "gold per equipment piece". Existing configs move to gold automatically.
+- **Cooking can be cancelled.** Every page of the cookpot dialogue ends with a Cancel button. The native back button does nothing under that dialogue, so this is the way out. Cancel consumes nothing.
+- **Performance.** The prompt-bar text hook sat on the game's message lookup, which the HUD calls for every string it draws, and allocated a managed string on each call whether or not a prompt was showing. It now does nothing unless a world prompt was requested in the last two seconds, and matches by raw memory compare. Thanks to Jarol for the per-mod idle-load measurements that pointed at it.
+- **Fixed on 3.2:** the native world prompt (the game's own interact label at beds and stations) was silently disabled for every shipped user because the Guid parse returns nothing on Title Update 3.2. The build now mints the Guid directly.
+
 ## 1.1.1
 
 - Removed three global hooks that 1.1.0 installed on the game's input queries and hold-interaction chain. They were left over from the keyboard bed-exit investigation and had no feature behind them once the real exit route was found. If 1.1.0 interfered with talking to NPCs or pawns on your setup, this is the build to try first.

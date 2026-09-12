@@ -38,7 +38,7 @@ Settings live in the REFramework menu under **Immersive Interactables**. The Adv
 ## Compatibility
 
 - Has no code prerequisite beyond REFramework. The prompt bar is bundled; IRIS and Brinebound are not required, and the mod shares its prompt bar with them when they are present.
-- Does not touch saves or quests. Cooking consumes the meat you choose, dyeing consumes dye bowls, tempering consumes one ore on completion.
+- Does not touch saves or quests. Cooking consumes the meat you choose, dyeing costs gold per equipment piece (configurable, or switch to dye bowls or free), tempering consumes one ore on completion.
 
 ## Known issues
 
