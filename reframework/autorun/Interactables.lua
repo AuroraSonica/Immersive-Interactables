@@ -24,7 +24,7 @@ local M = {
     registry_budget = 24,
     registry_slice_secs = 0.10,
     native_chores = true,
-    native_beds   = true,
+    native_beds   = false,
     native_ambient = false,
     unlock_secs   = 1.0,
     follow_game_controls = true,
@@ -167,6 +167,11 @@ end
 if (tonumber(M.cfg_rev) or 0) < 17 then
     M.registry_slice_secs = math.max(0.10, tonumber(M.registry_slice_secs) or 0.10)
     M.cfg_rev = 17
+    _save_cfg()
+end
+if (tonumber(M.cfg_rev) or 0) < 18 then
+    M.native_beds = false
+    M.cfg_rev = 18
     _save_cfg()
 end
 local CAT, cat_n = {}, 0
@@ -773,6 +778,11 @@ local ST = {
         { key = "trades", label = "Crafts and trades" },
     },
 }
+ST.native_groups = { gm50_036 = "everyday" }
+function ST.native_group(key)
+    if not key then return nil end
+    return ST.native_groups[key] or ST.native_groups[key:match("^(gm%d+_%d+)") or ""]
+end
 ST.compat32 = require("II.Compat32")
 ST.perf32 = require("II.Perf32")
 ST.vocation_loaded,ST.vocation_racks=pcall(require,'II.VocationRack32')
@@ -853,7 +863,9 @@ end
 function ST.restore_disabled_activities()
     if ST.player_interacting() == true then return end
     for addr, r in pairs(unlocks) do
-        if r.kind == "station" and not ST.activity_enabled(r.prop_key) then
+        local grouped = r.kind == "chore" and ST.native_group(r.prop_key)
+        if (r.kind == "station" and not ST.activity_enabled(r.prop_key))
+                or (grouped and not ST.group_on(grouped)) then
             local ok = ST.restore_unlock(r)
             if ok then stats.restored = stats.restored + 1 end
             unlocks[addr] = nil
@@ -865,19 +877,20 @@ local function _unlock_count(kind)
     for _, r in pairs(unlocks) do if not kind or r.kind == kind then n = n + 1 end end
     return n
 end
-local function _restore_unlocks(kind)
+local function _restore_unlocks(kind, keep)
     if (kind == nil or kind == "seat") and ST.player_interacting() == true then
         sc.restore_seats_when_clear = true
         return
     end
     for k, r in pairs(unlocks) do
-        if not kind or r.kind == kind then
+        if (not kind or r.kind == kind) and (not keep or not keep(r)) then
             local ok = ST.restore_unlock(r)
             if ok then stats.restored = stats.restored + 1 end
             unlocks[k] = nil
         end
     end
 end
+function ST.grouped_chore(r) return r.kind == "chore" and ST.native_group(r.prop_key) ~= nil end
 function CAMP_STATE.restore_cook_unlocks()
     for k, r in pairs(unlocks) do
         if r.kind == "station" and (CAMP_STATE.is_fake_cook_station(r.prop_key)
@@ -902,6 +915,8 @@ local function _unlock_kind(key)
     if ST.activity_enabled(key) then
         return "station"
     end
+    local native_group = ST.native_group(key)
+    if native_group then return ST.group_on(native_group) and "chore" or nil end
     if M.native_chores and key:match("^gm50_") then return "chore" end
     if M.native_beds and BED_KEYS[key] then return "bed" end
     return nil
@@ -1287,6 +1302,7 @@ local function _unlock_tick()
     if now - unlock_at < (M.unlock_secs or 1.0) then return end
     unlock_at = now
     local stations_on = ST.any_activity_enabled()
+    for _, g in pairs(ST.native_groups) do if ST.group_on(g) then stations_on = true break end end
     local ambient_on = M.native_ambient == true
     if CAMP_STATE.is_active() then CAMP_STATE.restore_cook_unlocks() end
     if not M.enabled and not stations_on and not ambient_on then
@@ -1300,7 +1316,7 @@ local function _unlock_tick()
     if stations_on then ST.restore_disabled_activities() end
     if not ambient_on and _unlock_count("ambient") > 0 then _restore_unlocks("ambient") end
     if M.enabled then
-        if not M.native_chores and _unlock_count("chore") > 0 then _restore_unlocks("chore") end
+        if not M.native_chores and _unlock_count("chore") > 0 then _restore_unlocks("chore", ST.grouped_chore) end
         if not M.native_beds and _unlock_count("bed") > 0 then _restore_unlocks("bed") end
     end
     local want_native = M.enabled
@@ -5947,11 +5963,6 @@ re.on_draw_ui(function()
             _save_cfg()
             if not M.enabled then _defer(function() _drop_all(true) end); _restore_unlocks("seat") end
         end
-        c, M.native_beds = imgui.checkbox("Beds", M.native_beds)
-        if c then
-            if not M.native_beds then _restore_unlocks("bed") end
-            _save_cfg()
-        end
         M.activity_groups = M.activity_groups or {}
         for _, group in ipairs(ST.groups) do
             local on = M.activity_groups[group.key] ~= false
@@ -5968,7 +5979,7 @@ re.on_draw_ui(function()
             if not M.native_chores then
                 _defer(function() _tl_stop("loose tools disabled") end)
                 _defer(_carry_release)
-                _restore_unlocks("chore")
+                _restore_unlocks("chore", ST.grouped_chore)
             end
             _save_cfg()
         end
@@ -6050,14 +6061,6 @@ re.on_draw_ui(function()
             if c2 then _save_cfg() end
         end
         imgui.text("Tall seat: " .. tostring(ST.tall_gate or "idle"))
-        c, M.bed_rest = imgui.checkbox(
-            "offer the native rest menu once you lie down", M.bed_rest ~= false)
-        if c then _save_cfg() end
-        if M.bed_rest ~= false then
-            c, M.bed_rest_anywhere = imgui.checkbox(
-                "Allow resting in non-home beds", M.bed_rest_anywhere ~= false)
-            if c then _save_cfg() end
-        end
         c, M.keep_tools = imgui.checkbox(
             "keep hold of tools when you walk away",
             M.keep_tools ~= false)
@@ -6108,6 +6111,25 @@ re.on_draw_ui(function()
                 end
             end
             imgui.tree_pop()
+        end
+        imgui.tree_pop()
+    end
+    if M.master ~= false and imgui.tree_node("(Experimental)") then
+        imgui.text("Off by default. Beds interfere with the game's own rest on some setups.")
+        c, M.native_beds = imgui.checkbox("Beds - lie down and rest from the bed", M.native_beds == true)
+        if c then
+            if not M.native_beds then _restore_unlocks("bed") end
+            _save_cfg()
+        end
+        if M.native_beds == true then
+            c, M.bed_rest = imgui.checkbox(
+                "offer the native rest menu once you lie down", M.bed_rest ~= false)
+            if c then _save_cfg() end
+            if M.bed_rest ~= false then
+                c, M.bed_rest_anywhere = imgui.checkbox(
+                    "Allow resting in non-home beds", M.bed_rest_anywhere ~= false)
+                if c then _save_cfg() end
+            end
         end
         imgui.tree_pop()
     end

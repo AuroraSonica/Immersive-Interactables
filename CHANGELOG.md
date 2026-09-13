@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.5
+
+- **Beds are now off by default and marked experimental.** Lying down in beds interfered with the game's own rest on some setups, and resting is a core function, so the mod no longer touches beds unless you opt in. The toggle moved to a collapsed "(Experimental)" section at the bottom of the panel. Existing configs are switched off once on update.
+- **The oxcart bell moved from "Loose tools" to "Everyday life".** It was only listed as a tool because of a catch-all rule. Turning Loose tools off no longer hides the bell; turning Everyday life off does.
+- **Known limitation, documented:** the fish-cutting table in the Common Quarter is plain scenery with no interaction object; the NPC animation there comes from an AI marker. It cannot be unlocked the way the meat board can. Same for the fruit and vegetable baskets.
+
+
 ## 1.1.4
 
 - **Town tools can be picked up again.** Hoes, hatchets, pitchforks and other loose tools authored as NPC work props (most of the ones leaning against walls in towns) played the put-down animation and never left the ground. The game only builds the hand-held copy of those tools when an NPC borrows them; the player had no such path, so the pickable had nothing to hand over and fell back to its end action. The mod now asks the game to build that copy when you approach or target such a tool. Tools at your own home, brooms and buckets were never affected. Thanks to everyone who reported it.
