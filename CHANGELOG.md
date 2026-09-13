@@ -1,12 +1,14 @@
 # Changelog
 
-## 1.1.6
+## 1.1.5
+
+Numbering note: Nexus 1.1.4 carries what the repo called 1.1.5 (beds experimental, bell moved). This build is 1.1.5 on Nexus and in the repo.
 
 - **One entry in REFramework's Script Generated UI instead of four.** The dye, prompt-bar and vocation scripts no longer register their own panels, and every diagnostic and prototype panel is removed from the release build entirely. Users see the settings tree and nothing else. Thanks to InfamousLooter for the report.
 - No gameplay changes.
 
 
-## 1.1.5
+## 1.1.5 as previously tagged (shipped to Nexus as 1.1.4)
 
 - **Beds are now off by default and marked experimental.** Lying down in beds interfered with the game's own rest on some setups, and resting is a core function, so the mod no longer touches beds unless you opt in. The toggle moved to a collapsed "(Experimental)" section at the bottom of the panel. Existing configs are switched off once on update.
 - **The oxcart bell moved from "Loose tools" to "Everyday life".** It was only listed as a tool because of a catch-all rule. Turning Loose tools off no longer hides the bell; turning Everyday life off does.
