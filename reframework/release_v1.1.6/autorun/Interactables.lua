@@ -3,6 +3,8 @@ json.dump_file = function(path, ...)
     if type(path) == "string" and path:match("^ImmersiveInteractables_") then return true end
     return dump(path, ...)
 end end
+_G.II_UI = _G.II_UI or { sections = {} }
+_G.II_UI.register = _G.II_UI.register or function() end
 local M = {
     enabled       = true,
     range         = 12.0,
@@ -788,12 +790,9 @@ ST.perf32 = require("II.Perf32")
 ST.vocation_loaded,ST.vocation_racks=pcall(require,'II.VocationRack32')
 if not ST.vocation_loaded then
     _log('Vocation rack load failed: '..tostring(ST.vocation_racks))
-    re.on_draw_ui(function()
-        if imgui.tree_node('Vocation Rack Status') then
-            imgui.text('Module failed to load: '..tostring(ST.vocation_racks))
-            imgui.tree_pop()
-        end
-    end)
+    _G.II_UI.register('Vocation rack status (load failure)', function()
+        imgui.text('Module failed to load: '..tostring(ST.vocation_racks))
+    end, true)
 end
 _log("TU3.2 repair revision 2026-09-05-buff-grant: reflected buff manager, two-argument camp call, pickup exclusion")
 function ST.player_interacting()

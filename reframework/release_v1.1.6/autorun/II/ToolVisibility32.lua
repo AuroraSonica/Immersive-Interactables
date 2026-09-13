@@ -1,3 +1,5 @@
+_G.II_UI = _G.II_UI or { sections = {} }
+_G.II_UI.register = _G.II_UI.register or function() end
 local V={enabled=false}
 V.auto_until=nil
 function V.observe_carry(id)
@@ -139,14 +141,12 @@ function V.install(get_holder,ids,get_phase)
         alive=false; owner=nil
         if V.enabled or V.until_at then pcall(json.dump_file,"ImmersiveInteractables_ToolVisibility32.json",state) end
     end)
-    if re.on_draw_ui then re.on_draw_ui(function()
-        if not imgui.tree_node("Interactables tool visibility (diagnostic)") then return end
+    _G.II_UI.register("Tool visibility (diagnostic)", function()
         imgui.text(V.enabled and "Capturing tool state." or (V.auto_until and "Armed: next beam pickup within 3 minutes records 45 seconds." or "Idle: no periodic tool reads or file writes."))
         if imgui.button("Capture tool visibility for 60 seconds") then
             V.enabled=true; V.until_at=os.clock()+60
             state.samples,state.events={},{}; signature=nil; dirty=true
         end
-        imgui.tree_pop()
-    end) end
+    end, true)
 end
 return V

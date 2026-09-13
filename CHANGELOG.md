@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.6
+
+- **One entry in REFramework's Script Generated UI instead of four.** The dye, prompt-bar and vocation scripts no longer register their own panels, and every diagnostic and prototype panel is removed from the release build entirely. Users see the settings tree and nothing else. Thanks to InfamousLooter for the report.
+- No gameplay changes.
+
+
 ## 1.1.5
 
 - **Beds are now off by default and marked experimental.** Lying down in beds interfered with the game's own rest on some setups, and resting is a core function, so the mod no longer touches beds unless you opt in. The toggle moved to a collapsed "(Experimental)" section at the bottom of the panel. Existing configs are switched off once on update.

@@ -1,3 +1,5 @@
+_G.II_UI = _G.II_UI or { sections = {} }
+_G.II_UI.register = _G.II_UI.register or function() end
 local R={entries={},prev=false}
 local keys={gm51_062=true,gm51_062_01=true,gm51_062_02=true,gm51_331=true,gm51_332=true}
 local static_keys={sm51_331_00=true,sm51_332_00=true,
@@ -222,8 +224,8 @@ function R.tick(ctx)
         if not ok then ctx.notice(reason) end
     end
 end
-if re and re.on_draw_ui then re.on_draw_ui(function()
-    if imgui.tree_node('Vocation Rack Status') then
+_G.II_UI.register('Vocation rack status', function()
+    do
         imgui.text(R.status or 'Waiting for update')
         imgui.text('Gameplay gate: '..(R.blocked or 'Clear'))
         imgui.text('Before opening REFramework: '..(R.last_gameplay or 'Not sampled near a rack yet'))
@@ -245,7 +247,6 @@ if re and re.on_draw_ui then re.on_draw_ui(function()
         if R.scan_error then imgui.text(R.scan_error) end
         imgui.text(string.format('Discovery samples: %d searches; search last/peak %.2f / %.2f ms; batch peak %.2f ms',
             R.searches or 0,R.find_ms or 0,R.find_peak or 0,R.batch_peak or 0))
-        imgui.tree_pop()
     end
-end) end
+end, false)
 return R

@@ -1,3 +1,5 @@
+_G.II_UI = _G.II_UI or { sections = {} }
+_G.II_UI.register = _G.II_UI.register or function() end
 local Loader=require('II.DialogueCloneLoad32')
 local Borrow=require('II.VocationBorrow32')
 local prepared,prepare_error=pcall(Borrow.prepare)
@@ -45,15 +47,13 @@ function API.queue()
     return ok,status
 end
 _G.InteractablesVocation32=API
-re.on_draw_ui(function()
-    if not imgui.tree_node('Vocation Menu — Borrowed Prefab Test') then return end
+_G.II_UI.register('Vocation menu (prefab test)', function()
     imgui.text(prepared and status or tostring(prepare_error))
     imgui.text('Preloads first, then opens once. Do not Reset Scripts while loading or open.')
     if prepared and not lease and not issued and imgui.button('Queue Preloaded Vocation Menu') then
         API.queue()
     end
-    imgui.tree_pop()
-end)
+end, true)
 re.on_pre_application_entry('UpdateBehavior',function()
     if not lease then return end
     local ok,err=pcall(function()

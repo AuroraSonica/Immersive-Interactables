@@ -1,3 +1,5 @@
+_G.II_UI = _G.II_UI or { sections = {} }
+_G.II_UI.register = _G.II_UI.register or function() end
 local CFG = "ImmersiveInteractables/dye_profiles.json"
 local Compat32 = require("II.Compat32")
 local preview_probe_ok, PreviewProbe32 = pcall(require, "II.MannequinPreflight32")
@@ -596,8 +598,7 @@ local function _reapply_tick()
     heal(_mockup_worn())
     heal(_mannequin_worn())
 end
-re.on_draw_ui(function()
-    if not imgui.tree_node("Immersive Dyes (dev preview)") then return end
+_G.II_UI.register("Dyeing", function()
     if DYE.status ~= "" then imgui.text(DYE.status) end
     if dye_preview_ok then
         local changed,value=imgui.checkbox("Camera-anchored dye mannequin (TU3.2 test)",DYE.preview_enabled)
@@ -827,8 +828,7 @@ re.on_draw_ui(function()
             DYE.status = "all dyes removed"
         end
     end
-    imgui.tree_pop()
-end)
+end, false)
 _load()
 local SUI = {
     plan = DyePlan32.new(),
@@ -2320,8 +2320,7 @@ re.on_application_entry("LateUpdateBehavior",function()
         pcall(function() log.info("[TemperVisual32] "..TEMPER.status) end)
     end
 end)
-re.on_draw_ui(function()
-    if not imgui.tree_node("Anvil tempering (visual prototype)") then return end
+_G.II_UI.register("Anvil tempering (prototype)", function()
     imgui.text(temper_combat_probe.status)
     imgui.text(temper_stamina_probe.status)
     imgui.text(temper_flow.status)
@@ -2429,8 +2428,7 @@ re.on_draw_ui(function()
         end
     end
     imgui.text("Completed treatments save the finish like a dye. Buffs last 30 minutes.")
-    imgui.tree_pop()
-end)
+end, true)
 re.on_frame(function()
     if not TEMPER.token or not TEMPER.show_hud or SUI.open or SUI.gui_open or temper_menu.open then return end
     pcall(function()

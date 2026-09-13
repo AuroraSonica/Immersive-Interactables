@@ -1,3 +1,5 @@
+_G.II_UI = _G.II_UI or { sections = {} }
+_G.II_UI.register = _G.II_UI.register or function() end
 local A = {}
 function A.mark(label) end
 function A.snapshot()
@@ -206,8 +208,8 @@ function A.install()
             if ok then dirty=false else state.save_error=tostring(err) end
         end
     end)
-    re.on_draw_ui(function()
-        if imgui.tree_node("Anvil native-menu trace (diagnostic)") then
+    _G.II_UI.register("Anvil native-menu trace (diagnostic)", function()
+        do
             imgui.text(enabled and "Capturing GUI requests; visit a normal blacksmith." or "Capture stopped; evidence saved.")
             imgui.text("Open Enhance Equipment, then back out. No purchase/upgrade needed.")
             for _, entry in ipairs(state.methods) do
@@ -221,9 +223,8 @@ function A.install()
             end
             if imgui.button("Capture idle comparison") then A.mark("manual idle") end
             if imgui.button("Stop capture") then enabled=false; dirty=true end
-            imgui.tree_pop()
         end
-    end)
+    end, true)
     re.on_script_reset(function()
         pcall(function() push("script reset", {}); state.capturing=false; json.dump_file(path, state) end)
     end)

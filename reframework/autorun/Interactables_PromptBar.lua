@@ -1,3 +1,5 @@
+_G.II_UI = _G.II_UI or { sections = {} }
+_G.II_UI.register = _G.II_UI.register or function() end
 local M = {
     enabled = true,
     slot    = "PNL_R02",
@@ -455,8 +457,7 @@ re.on_application_entry("LateUpdateBehavior", function()
     end
 end)
 re.on_script_reset(function() slots = {}; raw = {} end)
-re.on_draw_ui(function()
-    if not imgui.tree_node("IMMERSIVE INTERACTABLES - PROMPT BAR") then return end
+_G.II_UI.register("Prompt bar", function()
     imgui.text("Modules publish an action; the game's button panel shows it.")
     local cur = _G.IrisPrompt.current()
     imgui.text("currently offering: " .. (cur and ("'" .. cur .. "'") or "nothing"))
@@ -480,6 +481,5 @@ re.on_draw_ui(function()
     local sc, sv = imgui.input_text("panel slot (PNL_R02 = B, PNL_R03 = A)", M.slot)
     if sc and sv ~= "" then M.slot = sv end
     c, M.log = imgui.checkbox("write the log", M.log)
-    imgui.tree_pop()
-end)
+end, true)
 _log("IrisPromptBar loaded - slot " .. tostring(M.slot))

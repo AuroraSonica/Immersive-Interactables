@@ -1,3 +1,5 @@
+_G.II_UI = _G.II_UI or { sections = {} }
+_G.II_UI.register = _G.II_UI.register or function() end
 local P={active=false,rows={}}
 function P.call(label,fn,...)
     if not P.active then return pcall(fn,...) end
@@ -19,8 +21,7 @@ function P.tick(now)
 end
 if re then
     re.on_application_entry("LateUpdateBehavior",function() P.tick() end)
-    re.on_draw_ui(function()
-        if not imgui.tree_node("Immersive Interactables performance") then return end
+    _G.II_UI.register("Performance capture", function()
         if imgui.button("Capture 30 seconds of script timings") then P.start() end
         imgui.text(P.active and "Capturing: play normally." or "Profiler idle (no routine timing or disk writes).")
         local keys={}; for k in pairs(P.rows) do keys[#keys+1]=k end; table.sort(keys)
@@ -28,7 +29,6 @@ if re then
             local r=P.rows[k]
             imgui.text(string.format("%s: mean %.3f ms, max %.3f ms, %d calls, %d errors",k,r.total_ms/r.calls,r.max_ms,r.calls,r.errors))
         end
-        imgui.tree_pop()
-    end)
+    end, true)
 end
 return P
